@@ -1,0 +1,269 @@
+# Validated RCM terminology: single source of truth for
+#   - critical-term detection in user questions (aliases)
+#   - answer validation (acronym expansion, forbidden misdefinitions, required concepts, formulas)
+#   - the definition pinned into the prompt when the model gets a term wrong
+#   - the verbatim fallback when the model contradicts it twice
+#
+# Field reference:
+#   aliases:              surface forms detected in questions (case-insensitive, whole words)
+#   acronyms:             abbreviations whose expansion is checked in answers
+#   expansion:            the only correct expansion of the acronym(s)
+#   required_any:         answer about this term must contain at least one (lower-case substring)
+#   forbidden:            known misdefinitions; presence is an error (lower-case substring)
+#   formula / formula_required_all: if the answer states a formula for the term, the formula
+#                         sentence must contain all of these tokens
+#
+# Definitions mirror the knowledge base documents in this folder. Review changes with an RCM SME.
+
+version: 1
+terms:
+  era:
+    name: ERA (Electronic Remittance Advice)
+    aliases: [era, eras, electronic remittance advice, electronic remittance, "835 remittance"]
+    acronyms: [ERA]
+    expansion: Electronic Remittance Advice
+    definition: >
+      An ERA (Electronic Remittance Advice) is the electronic explanation of payment that a payer
+      sends to a provider after adjudicating a claim, transmitted as the HIPAA-standard ASC X12 835
+      transaction. It reports the billed, allowed, paid and patient-responsibility amounts and explains
+      every adjustment with Claim Adjustment Reason Codes (CARCs) and Remittance Advice Remark Codes
+      (RARCs). Providers use ERAs to auto-post payments, identify denials and reconcile EFT deposits.
+    source: era_eob.md
+    required_any: [remittance, "835"]
+    forbidden:
+      - electronic revenue attribution
+      - electronic retrieval agreement
+      - event-related audit
+      - electronic reimbursement agreement
+      - electronic remittance agreement
+      - electronic records access
+
+  eob:
+    name: EOB (Explanation of Benefits)
+    aliases: [eob, eobs, explanation of benefits]
+    acronyms: [EOB]
+    expansion: Explanation of Benefits
+    definition: >
+      An EOB (Explanation of Benefits) is a statement from a health plan, sent mainly to the patient,
+      explaining how a claim was processed: the services billed, the amount allowed, the amount the
+      plan paid and what the patient may owe. An EOB is not a bill. Providers may also receive paper
+      EOBs from payers that do not send ERAs.
+    source: era_eob.md
+    required_any: [explanation of benefits, statement]
+    forbidden:
+      - explanation of billing
+      - estimate of benefits
+      - eob is a bill
+      - electronic order of benefits
+
+  days_in_ar:
+    name: Days in AR (Days in Accounts Receivable)
+    aliases: [days in ar, days in a/r, days in accounts receivable, ar days, days sales outstanding]
+    acronyms: []
+    expansion: null
+    definition: >
+      Days in AR measures the average number of days it takes to collect payment after services are
+      billed. Days in AR = Total accounts receivable balance / Average daily gross charges, where
+      average daily gross charges = total gross charges for a recent period (commonly 90 days) /
+      number of days in that period. Lower is better; common targets are under 40 days, with high
+      performers below 30.
+    source: kpi_definitions.md
+    required_any: [average daily, daily charges, days it takes, number of days, collect]
+    forbidden:
+      - total charges / total payments
+      - divided by total claims
+    formula: Days in AR = Total AR balance / Average daily gross charges
+    formula_required_all: [average daily]
+
+  ar:
+    name: AR (Accounts Receivable)
+    aliases: [accounts receivable]
+    acronyms: [AR, A/R]
+    expansion: Accounts Receivable
+    definition: >
+      Accounts receivable (AR) is the total amount owed to a provider for services already delivered
+      and billed but not yet paid, by payers (insurance AR) and patients (patient AR), tracked in aging
+      buckets such as 0-30, 31-60, 61-90, 91-120 and over 120 days.
+    source: ar_management.md
+    required_any: []
+    forbidden: []
+
+  denial:
+    name: Claim denial
+    aliases: [denial, denials, denied claim, denied claims, claim denial]
+    acronyms: []
+    expansion: null
+    definition: >
+      A claim denial occurs when a payer has received and adjudicated a claim and refuses to pay all
+      or part of it. Denials are reported on the ERA (835) or EOB with a Claim Adjustment Reason Code.
+      A denied claim is resolved by submitting a corrected claim or filing an appeal within the
+      payer's deadlines.
+    source: denials_and_rejections.md
+    required_any: [payer, insur, adjudicat, processed, plan]
+    forbidden:
+      - denial occurs before adjudication
+      - denials are never processed
+      - denied claims cannot be appealed
+
+  rejection:
+    name: Claim rejection
+    aliases: [rejection, rejections, rejected claim, rejected claims, claim rejection]
+    acronyms: []
+    expansion: null
+    definition: >
+      A claim rejection occurs when a claim fails front-end edits at the clearinghouse or payer and is
+      never accepted into the payer's adjudication system, typically because of formatting errors,
+      invalid member IDs, invalid NPIs or missing required fields. Rejections are reported on
+      acknowledgments (999, 277CA). A rejected claim is corrected and resubmitted as a new claim; it
+      is not appealed.
+    source: denials_and_rejections.md
+    required_any: [clearinghouse, before, front-end, front end, not accepted, never, edit, format, acknowledg]
+    forbidden:
+      - rejection occurs after adjudication
+      - appeal the rejection
+      - appeal a rejected
+      - rejected claims are appealed
+
+  first_pass_resolution:
+    name: First-Pass Resolution Rate (FPRR)
+    aliases: [first pass resolution, first-pass resolution, first pass resolution rate, first-pass resolution rate, fpr, fprr, first pass yield]
+    acronyms: [FPRR, FPR]
+    expansion: First Pass Resolution Rate
+    definition: >
+      First-pass resolution rate (FPRR) is the percentage of claims that are paid or otherwise resolved
+      on the first submission, with no rework, resubmission or appeal. FPRR = (Claims resolved on first
+      submission / Total claims adjudicated) x 100. The common target is 90% or higher.
+    source: kpi_definitions.md
+    required_any: [first submission, first pass, first-pass, initial submission, first time, without rework, first attempt]
+    forbidden: []
+    formula: FPRR = (Claims resolved on first submission / Total claims adjudicated) x 100
+    formula_required_all: [first, total]
+
+  clean_claim_rate:
+    name: Clean Claim Rate
+    aliases: [clean claim rate, clean claim, clean claims, clean claim ratio]
+    acronyms: [CCR]
+    expansion: Clean Claim Rate
+    definition: >
+      Clean claim rate is the percentage of claims that pass all edits and are accepted by the
+      clearinghouse and payer on first submission without any correction. Clean claim rate = (Claims
+      accepted on first submission without edits or rejections / Total claims submitted) x 100. The
+      common target is 95% or higher.
+    source: kpi_definitions.md
+    required_any: [without, first submission, no errors, accepted, edit, error-free, error free]
+    forbidden: []
+    formula: Clean claim rate = (Claims accepted on first submission / Total claims submitted) x 100
+    formula_required_all: [total]
+
+  denial_rate:
+    name: Denial Rate
+    aliases: [denial rate, denial rates, claim denial rate]
+    acronyms: []
+    expansion: null
+    definition: >
+      Denial rate is the percentage of adjudicated claims that payers deny. Denial rate = (Number of
+      denied claims / Total number of claims adjudicated) x 100; it can also be measured in dollars.
+      Typical denial rates run around 5-10%; best practice is below 5%.
+    source: kpi_definitions.md
+    required_any: [denied, denial]
+    forbidden: []
+    formula: Denial rate = (Denied claims / Total claims adjudicated) x 100
+    formula_required_all: [denied, total]
+
+  collection_rate:
+    name: Net Collection Rate
+    aliases: [collection rate, net collection rate, gross collection rate, collection ratio]
+    acronyms: [NCR]
+    expansion: Net Collection Rate
+    definition: >
+      Net collection rate measures how much collectible revenue was actually collected. Net collection
+      rate = (Total payments / (Total charges - Contractual adjustments)) x 100. The common target is
+      95% or higher. Gross collection rate = Total payments / Total gross charges x 100.
+    source: kpi_definitions.md
+    required_any: [payment, collect]
+    forbidden: []
+    formula: Net collection rate = Payments / (Charges - Contractual adjustments) x 100
+    formula_required_all: [payment]
+
+  prior_authorization:
+    name: Prior Authorization
+    aliases: [prior authorization, prior authorizations, prior auth, preauthorization, pre-authorization, precertification, pre-certification]
+    acronyms: []
+    expansion: null
+    definition: >
+      Prior authorization (also called preauthorization or precertification) is the requirement that a
+      provider obtain approval from the patient's health plan before delivering a specific service,
+      procedure, medication or item for the plan to cover it. Services delivered without a required
+      authorization are typically denied (CARC 197 or CARC 15).
+    source: prior_authorization.md
+    required_any: [before, prior to, in advance, approv]
+    forbidden:
+      - after the claim is paid
+      - authorization is obtained after the service
+      - authorization after the service is delivered
+
+  payment_posting:
+    name: Payment Posting
+    aliases: [payment posting, cash posting, posting payments, post payments]
+    acronyms: []
+    expansion: null
+    definition: >
+      Payment posting is the revenue cycle step in which payments and adjustments from payers and
+      patients are recorded against the correct patient accounts and claim lines, including paid
+      amounts, contractual adjustments, patient responsibility and denial codes, usually by
+      auto-posting ERA (835) files and manually posting paper EOBs and patient payments.
+    source: payment_posting.md
+    required_any: [record, post, appl, enter]
+    forbidden:
+      - posting claims to the payer
+      - payment posting is submitting
+
+  carc:
+    name: CARC (Claim Adjustment Reason Code)
+    aliases: [carc, carcs, claim adjustment reason code, claim adjustment reason codes]
+    acronyms: [CARC]
+    expansion: Claim Adjustment Reason Code
+    definition: >
+      A Claim Adjustment Reason Code (CARC) is a standard code on the remittance (835 or EOB) that
+      explains why a claim or service line was paid differently from how it was billed, used with a
+      group code (CO, PR, OA, PI).
+    source: denials_and_rejections.md
+    required_any: [reason, adjust]
+    forbidden: []
+
+  rarc:
+    name: RARC (Remittance Advice Remark Code)
+    aliases: [rarc, rarcs, remittance advice remark code, remittance advice remark codes]
+    acronyms: [RARC]
+    expansion: Remittance Advice Remark Code
+    definition: >
+      A Remittance Advice Remark Code (RARC) gives additional explanation for an adjustment already
+      described by a CARC on the remittance.
+    source: era_eob.md
+    required_any: [remark, additional, explan]
+    forbidden: []
+
+  cob:
+    name: COB (Coordination of Benefits)
+    aliases: [cob, coordination of benefits]
+    acronyms: [COB]
+    expansion: Coordination of Benefits
+    definition: >
+      Coordination of benefits (COB) determines which plan pays first (primary) and which pays second
+      (secondary) when a patient has more than one coverage, so that total payments do not exceed the
+      charge.
+    source: eligibility_and_registration.md
+    required_any: [primary, secondary, more than one, multiple]
+    forbidden: []
+
+  eft:
+    name: EFT (Electronic Funds Transfer)
+    aliases: [eft, electronic funds transfer]
+    acronyms: [EFT]
+    expansion: Electronic Funds Transfer
+    definition: >
+      Electronic Funds Transfer (EFT) is the electronic deposit of a payer's payment into the
+      provider's bank account (ACH CCD+ format), matched to its ERA by the trace number.
+    source: era_eob.md
+    required_any: [payment, deposit, funds]
+    forbidden: []

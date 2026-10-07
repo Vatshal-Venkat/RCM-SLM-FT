@@ -1,0 +1,124 @@
+@import "tailwindcss";
+
+/*
+  RCM AI Platform - dark premium theme.
+  Chart series colours are the validated dark categorical steps (all checks pass against the
+  card surface #13161c: CVD adjacent dE >= 8.4, normal-vision >= 19.3, contrast >= 3:1).
+  Status colours are reserved for state and always ship with an icon + label.
+*/
+:root {
+  color-scheme: dark;
+
+  --page: #0a0c10;
+  --surface-1: #13161c;
+  --surface-2: #1a1e26;
+  --surface-3: #232833;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.14);
+
+  --text-primary: #f4f5f7;
+  --text-secondary: #b7bcc8;
+  --text-muted: #8a909c;
+
+  --accent: #7c8cff;
+  --accent-2: #3fd0c9;
+
+  --grid: #262b35;
+  --axis: #3a404c;
+
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #9085e9;
+
+  --good: #0ca30c;
+  --good-text: #3ccf6a;
+  --warning: #fab219;
+  --serious: #ec835a;
+  --critical: #e05252;
+}
+
+@theme inline {
+  --color-page: var(--page);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+  --color-ink: var(--text-primary);
+  --color-ink-2: var(--text-secondary);
+  --color-ink-3: var(--text-muted);
+  --color-accent: var(--accent);
+  --color-accent-2: var(--accent-2);
+  --color-good: var(--good-text);
+  --color-warning: var(--warning);
+  --color-serious: var(--serious);
+  --color-critical: var(--critical);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+html,
+body {
+  background: var(--page);
+  color: var(--text-primary);
+}
+
+body {
+  font-family: var(--font-geist-sans), system-ui, -apple-system, "Segoe UI", sans-serif;
+  background-image:
+    radial-gradient(1200px 600px at 85% -10%, rgba(124, 140, 255, 0.10), transparent 60%),
+    radial-gradient(900px 500px at -10% 110%, rgba(63, 208, 201, 0.07), transparent 60%);
+  background-attachment: fixed;
+}
+
+.glass {
+  background: linear-gradient(180deg, rgba(26, 30, 38, 0.78), rgba(19, 22, 28, 0.78));
+  backdrop-filter: blur(14px);
+  border: 1px solid var(--border);
+}
+
+.gradient-text {
+  background: linear-gradient(90deg, #c7ceff 0%, #7c8cff 45%, #3fd0c9 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Markdown rendered from the assistant */
+.prose-rcm p { margin: 0.35rem 0; line-height: 1.6; }
+.prose-rcm ul { list-style: disc; padding-left: 1.25rem; margin: 0.35rem 0; }
+.prose-rcm ol { list-style: decimal; padding-left: 1.25rem; margin: 0.35rem 0; }
+.prose-rcm li { margin: 0.15rem 0; }
+.prose-rcm strong { color: var(--text-primary); font-weight: 600; }
+.prose-rcm code { font-family: var(--font-geist-mono); font-size: 0.85em; background: var(--surface-3); padding: 0.05rem 0.3rem; border-radius: 4px; }
+.prose-rcm table { width: 100%; font-size: 0.85rem; border-collapse: collapse; margin: 0.5rem 0; }
+.prose-rcm th, .prose-rcm td { border-bottom: 1px solid var(--border); padding: 0.3rem 0.5rem; text-align: left; }
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-up { animation: fade-up 0.35s ease-out both; }
+
+@keyframes pulse-dot {
+  0%, 80%, 100% { opacity: 0.25; }
+  40% { opacity: 1; }
+}
+.typing-dot { animation: pulse-dot 1.2s infinite ease-in-out; }
+.typing-dot:nth-child(2) { animation-delay: 0.15s; }
+.typing-dot:nth-child(3) { animation-delay: 0.3s; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 8px; border: 2px solid var(--page); }
+::-webkit-scrollbar-track { background: transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-up, .typing-dot { animation: none; }
+}

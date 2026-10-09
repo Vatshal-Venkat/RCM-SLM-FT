@@ -1,8 +1,8 @@
 """Build the RAG index from the knowledge/ folder.
 
-Usage (from the repo root):
-    backend/.venv/Scripts/python scripts/ingest_knowledge.py            # build index
-    backend/.venv/Scripts/python scripts/ingest_knowledge.py --query "What is an ERA?"   # build + test search
+Usage (from backend/, after venv/Scripts/activate):
+    python ../scripts/ingest_knowledge.py            # build index
+    python ../scripts/ingest_knowledge.py --query "What is an ERA?"   # build + test search
 """
 
 from __future__ import annotations

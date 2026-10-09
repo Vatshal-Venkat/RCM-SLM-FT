@@ -1,8 +1,8 @@
 """Create the schema and load fully synthetic RCM claims data.
 
-Usage (from the repo root):
-    backend/.venv/Scripts/python scripts/seed_database.py --reset
-    backend/.venv/Scripts/python scripts/seed_database.py --reset --as-of 2026-10-06 --months 18 --seed 42
+Usage (from backend/, after venv/Scripts/activate):
+    python ../scripts/seed_database.py --reset
+    python ../scripts/seed_database.py --reset --as-of 2026-10-06 --months 18 --seed 42
 
 Uses DATABASE_URL from backend/.env (SQLite at backend/data/rcm.db by default).
 """

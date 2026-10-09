@@ -24,58 +24,40 @@ A domain-specific Revenue Cycle Management (RCM) AI platform powered by a fine-t
 
 ### 2. Backend Setup & Run
 
+All backend commands run from the `backend/` directory with the virtual environment activated.
 Open a terminal in the project root:
 
 ```powershell
-# Navigate to backend directory
 cd backend
 
-# Create virtual environment (if not already created)
-python -m venv .venv
+# Create the virtual environment (first time only)
+python -m venv venv
 
-# Activate virtual environment
-# On Windows (PowerShell):
-.\.venv\Scripts\Activate.ps1
-# On Windows (CMD):
-.\.venv\Scripts\activate.bat
-# On Linux / macOS:
-source .venv/bin/activate
+# Activate it (every new terminal)
+venv/Scripts/activate
 
-# Install dependencies
+# Install dependencies (first time only)
 pip install -r requirements.txt
 
 # Create .env from example (if not present)
-Copy-Item .env.example .env     # Windows PowerShell
-# or: cp .env.example .env       # Linux / macOS / Git Bash
+Copy-Item .env.example .env
 ```
 
 #### Ingest Knowledge (Build RAG Vector Index)
 ```powershell
-# From the project root (using the backend venv):
 # (Optional) regenerate knowledge/curated_qa.md from training/datasets first
-backend\.venv\Scripts\python scripts\build_curated_qa.py
-backend\.venv\Scripts\python scripts\ingest_knowledge.py
-
-# Or from backend/ directory:
-python ..\scripts\ingest_knowledge.py
+python ../scripts/build_curated_qa.py
+python ../scripts/ingest_knowledge.py
 ```
 
 #### Seed Synthetic Claims Database
 ```powershell
-# From the project root:
-backend\.venv\Scripts\python scripts\seed_database.py --reset
-
-# Or from backend/ directory:
-python ..\scripts\seed_database.py --reset
+python ../scripts/seed_database.py --reset
 ```
 
 #### Start FastAPI Server
 ```powershell
-# From backend/ directory with venv activated:
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
-
-# Or directly from root without activating:
-backend\.venv\Scripts\uvicorn app.main:app --app-dir backend --reload --host 127.0.0.1 --port 8000
 ```
 
 - **Backend API**: `http://127.0.0.1:8000`
@@ -107,20 +89,19 @@ npm run dev
 
 #### Ask questions via CLI (Query running backend):
 ```powershell
-# Query the live backend
-python scripts\ask.py "What is an ERA?"
-python scripts\ask.py "Explain CO 16 denial code"
-python scripts\ask.py "What are the key KPIs for AR management?" --no-rag
+# From backend/ with venv/Scripts/activate run, while the server is up
+python ../scripts/ask.py "What is an ERA?"
+python ../scripts/ask.py "Explain CO 16 denial code"
+python ../scripts/ask.py "What are the key KPIs for AR management?" --no-rag
 ```
 
 #### Run Unit Tests:
 ```powershell
-# From backend/ directory:
-cd backend
-.\.venv\Scripts\pytest -m "not model"
+# From backend/ with venv/Scripts/activate run
+pytest -m "not model"
 
 # Run all tests including model inference (requires GGUF weights):
-.\.venv\Scripts\pytest
+pytest
 ```
 
 ---

@@ -232,7 +232,7 @@ class ChatService:
         return prompts.build_messages(
             req.message, history=history, references=blocks or None,
             data_context=g.data.text if g.data else None, correction=correction,
-            format_instructions=_format_for(g.data),
+            format_instructions=prompts.FORMAT_ANALYTICS if g.data else prompts.FORMAT_KNOWLEDGE,
         )
 
     def _validate(self, text: str, question: str, intent: IntentResult, g: _Grounding, finish: str) -> ValidationReport:
@@ -317,15 +317,6 @@ class ChatService:
 # ---------------------------------------------------------------------- helpers
 def _is_data_intent(intent: IntentResult) -> bool:
     return intent.intent in (Intent.KPI_ANALYTICS, Intent.CLAIM_SPECIFIC, Intent.DATA_QUERY)
-
-
-def _format_for(data: DataContext | None) -> str:
-    if data is None:
-        return prompts.FORMAT_KNOWLEDGE
-    # A claim fact sheet has no KEY FINDINGS block; use the claim layout instead of the analytics one.
-    if data.payload.get("type") == "claim" and data.payload.get("found"):
-        return prompts.FORMAT_CLAIM
-    return prompts.FORMAT_ANALYTICS
 
 
 def _ms(t: float) -> float:

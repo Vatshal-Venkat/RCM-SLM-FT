@@ -8,9 +8,9 @@ This turns those examples into a retrievable knowledge document, with three safe
   - every answer must pass the validated-terms checks (acronym expansions, forbidden
     misdefinitions, KPI formulas, invented identifiers); failing answers are dropped and listed
 
-Usage (from the repo root), then rebuild the index:
-    backend/.venv/Scripts/python scripts/build_curated_qa.py
-    backend/.venv/Scripts/python scripts/ingest_knowledge.py
+Usage (from backend/, after venv/Scripts/activate), then rebuild the index:
+    python ../scripts/build_curated_qa.py
+    python ../scripts/ingest_knowledge.py
 """
 
 from __future__ import annotations

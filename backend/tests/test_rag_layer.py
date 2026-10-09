@@ -130,7 +130,7 @@ def _service(llm, retriever, data_provider=None):
     return ChatService(llm, Settings(_env_file=None), retriever=retriever, data_provider=data_provider)
 
 
-def test_claim_question_retrieves_on_claim_facts_with_claim_format():
+def test_claim_question_retrieves_on_claim_facts():
     retriever = FakeRetriever([_hit("prior_authorization.md", "Retro authorization", 0.9,
                                     "Request retroactive authorization and appeal a CARC 197 denial.")])
     llm = ScriptedLLM("**Claim summary:** Claim CLM-001234 was denied with CARC 197 because authorization was "
@@ -138,7 +138,6 @@ def test_claim_question_retrieves_on_claim_facts_with_claim_format():
     resp = asyncio.run(_service(llm, retriever, ClaimProvider()).answer(
         ChatRequest(message="Why was claim CLM-001234 denied?")))
     assert retriever.queries[0].startswith("CARC 197")
-    assert "**Claim summary:**" in llm.calls[0][0].content
     assert resp.validation.passed, resp.validation.issues
 
 

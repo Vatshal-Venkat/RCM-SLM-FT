@@ -85,7 +85,7 @@ Until the data is fixed and the model retrained, the serving pipeline compensate
 | Issue | Mitigation | Code |
 |---|---|---|
 | 1. ID hallucination | Answers may only state claim / payer / provider IDs (and 9+ digit numbers) that appear in the question, data or references; leaked `<..._ID>` placeholders are rejected too. Violations trigger regeneration, and IDs still unsupported are masked as `[unverified ID removed]`. | `backend/app/ai/validators.py`, `ChatService._mask_identifiers` |
-| 2. Canned `claim_review` | Chat retrieves on the claim's own facts (CARC, status, category) instead of the question wording, and uses the claim answer layout. | `DataContext.retrieval_query`, `chat_service._format_for` |
+| 2. Canned `claim_review` | Chat retrieves on the claim's own facts (CARC, status, category) instead of the question wording. (A dedicated claim answer layout was tried and reverted: the model dropped rule-based findings such as missed timely filing.) | `DataContext.retrieval_query` |
 | 4. Thin knowledge coverage | The knowledge Q&A is published to RAG as `knowledge/curated_qa.md`. At most one curated pair enters the context, and term definitions always come from the reference documents. | `scripts/build_curated_qa.py`, `backend/app/ai/rag.py` |
 
 `curated_qa.md` excludes questions that appear in validation/test (so evaluation is not
@@ -93,6 +93,8 @@ contaminated) and every answer that fails the validated-terms checks. Rebuild it
 index whenever the datasets change:
 
 ```powershell
-backend\.venv\Scripts\python scripts\build_curated_qa.py
-backend\.venv\Scripts\python scripts\ingest_knowledge.py
+cd backend
+venv/Scripts/activate
+python ../scripts/build_curated_qa.py
+python ../scripts/ingest_knowledge.py
 ```

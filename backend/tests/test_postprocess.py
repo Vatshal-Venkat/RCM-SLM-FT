@@ -22,6 +22,16 @@ def test_clean_answer_keeps_existing_bold_labels():
     assert clean_answer(text, "What is an ERA?") == text
 
 
+def test_clean_answer_drops_echoed_reference_list():
+    # Real output: the model appended the reference blocks it was given.
+    text = ("**Answer:** An ERA is the 835 remittance [1].\n**Recommended action:** Post it.\n"
+            "[1] ERA and EOB - Remittance Documents - What is an ERA?\nAn ERA (Electronic Remittance Advice) is ...\n"
+            "[2] Curated RCM Q&A - RCM terminology > What is an ERA?")
+    out = clean_answer(text, "What is an ERA?")
+    assert out.endswith("**Recommended action:** Post it.")
+    assert "remittance [1]." in out
+
+
 @pytest.mark.parametrize("question, terms, expected", [
     ("What is an ERA?", ["era"], True),
     ("Explain payment posting.", ["payment_posting"], True),

@@ -22,6 +22,15 @@ def strip_question_echo(text: str, question: str) -> str:
     return t
 
 
+_REF_ECHO_RE = re.compile(r"\n\s*\[\d{1,2}\][ \t]+\S[\s\S]*$")
+
+
+def strip_reference_echo(text: str) -> str:
+    """Drop a trailing copy of the reference list ("[1] Title ..."). Sources are attached
+    separately; inline citations like "... posting [1]." are kept."""
+    return _REF_ECHO_RE.sub("", text).rstrip()
+
+
 def normalize_sections(text: str) -> str:
     """Render section labels consistently as '**Label:**' at the start of a line."""
     canonical = {label.lower(): label for label in SECTION_LABELS}
@@ -37,4 +46,4 @@ def normalize_sections(text: str) -> str:
 
 
 def clean_answer(text: str, question: str) -> str:
-    return normalize_sections(strip_question_echo(text, question))
+    return normalize_sections(strip_reference_echo(strip_question_echo(text, question)))

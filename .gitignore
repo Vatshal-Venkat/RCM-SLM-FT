@@ -19,6 +19,7 @@ backend/models/*
 backend/data/index/
 backend/data/*.db
 backend/data/*.sqlite
+training/adapters/
 
 # Frontend
 node_modules/

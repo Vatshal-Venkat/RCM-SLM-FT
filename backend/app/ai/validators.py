@@ -12,6 +12,7 @@ Checks:
   - critical terminology (acronym expansions, forbidden misdefinitions, required concepts)
   - KPI formulas
   - numbers not supported by references / data / question
+  - identifiers (claim / payer / provider IDs) not supported by references / data / question
   - missing or invalid citations when references were supplied
   - relevance to the question
 """
@@ -120,6 +121,43 @@ _NUM_RE = re.compile(
     r"(?:\s?(?P<suf>[kKmM]\b|thousand\b|million\b))?"
 )
 _CITE_RE = re.compile(r"\[(\d{1,2})\]")
+
+# Identifiers the model must never invent. The fine-tuning data paired masked inputs
+# (<CLAIM_ID>, <PROVIDER_ID>) with real IDs in the outputs, so the model learned to emit claim
+# numbers it was never shown. Covers database IDs (CLM-001234, PYR-MCR, PRV-01), long numeric
+# IDs (9+ digits, e.g. claim numbers) and anonymisation placeholders copied from training inputs.
+_ID_RE = re.compile(
+    r"\bCLM[-_ ]?\d{4,10}\b|\bCLAIM[-_]\d{4,10}\b|\b(?:PYR|PRV)-[A-Z0-9]{2,4}\b"
+    r"|(?<![\w.,$])\d{9,}(?![\w]|[.,]\d)|<[A-Z][A-Z_]*_ID>",
+    re.IGNORECASE,
+)
+ID_REDACTION = "[unverified ID removed]"
+
+
+def _id_key(token: str) -> str:
+    t = token.upper()
+    m = re.fullmatch(r"(?:CLM|CLAIM)[-_ ]?(\d+)", t)
+    return f"CLM-{m.group(1)}" if m else t
+
+
+def _allowed_ids(sources: list[str]) -> set[str]:
+    return {_id_key(m.group(0)) for s in sources if s for m in _ID_RE.finditer(s)}
+
+
+def unsupported_identifiers(text: str, sources: list[str]) -> list[str]:
+    """Identifiers in `text` that appear in none of `sources` (question, data, references)."""
+    allowed = _allowed_ids(sources)
+    out: list[str] = []
+    for m in _ID_RE.finditer(text):
+        if _id_key(m.group(0)) not in allowed and m.group(0) not in out:
+            out.append(m.group(0))
+    return out
+
+
+def redact_identifiers(text: str, sources: list[str]) -> str:
+    """Mask identifiers that are not supported by `sources`."""
+    allowed = _allowed_ids(sources)
+    return _ID_RE.sub(lambda m: m.group(0) if _id_key(m.group(0)) in allowed else ID_REDACTION, text)
 _TRANSACTION_NUMBERS = {835.0, 837.0, 270.0, 271.0, 276.0, 277.0, 278.0, 999.0, 100.0}
 _SUFFIX = {"k": 1e3, "thousand": 1e3, "m": 1e6, "million": 1e6}
 
@@ -140,6 +178,14 @@ def _close(a: float, b: float) -> bool:
 
 def content_words(text: str) -> set[str]:
     return {w for w in _WORD_RE.findall(text.lower()) if w not in _STOP and len(w) > 2}
+
+
+def _stem(word: str) -> str:
+    """Light suffix folding so "denials"/"denial" and "increased"/"increase" compare equal."""
+    for suf in ("ing", "ed", "es", "s", "e"):
+        if len(word) > len(suf) + 3 and word.endswith(suf) and not word.endswith("ss"):
+            return word[: -len(suf)]
+    return word
 
 
 def term_forms(rule: TermRule) -> list[str]:
@@ -223,6 +269,7 @@ class ResponseValidator:
         self._check_phi(text, rep)
         self._check_terms(text, question, query_terms, rep)
         self._check_numbers(text, question, reference_texts, data_text, rep)
+        self._check_identifiers(text, question, reference_texts, data_text, rep)
         self._check_direction(text, data_text, rep)
         self._check_citations(text, len(reference_texts), rep)
         self._check_relevance(text, question, reference_texts + ([data_text] if data_text else []), rep)
@@ -300,9 +347,10 @@ class ResponseValidator:
     def _check_numbers(text: str, question: str, refs: list[str], data_text: str | None, rep: ValidationReport) -> None:
         allowed_src = " ".join([question, data_text or "", *refs])
         allowed = [v for v in (_num_value(m) for m in _NUM_RE.finditer(allowed_src)) if v is not None]
-        # Strip citation markers and list numbering before scanning.
+        # Strip citation markers, list numbering and identifiers (checked separately) before scanning.
         body = _CITE_RE.sub("", text)
         body = re.sub(r"(?m)^\s*\d+[.)]\s", "", body)
+        body = _ID_RE.sub(" ", body)
         unsupported = []
         for m in _NUM_RE.finditer(body):
             tok, val = m.group(0).strip(), _num_value(m)
@@ -321,6 +369,16 @@ class ResponseValidator:
             rep.issues.append(ValidationIssue(
                 "unsupported_numbers", sev,
                 f"Numbers not found in the references or data: {', '.join(sorted(set(unsupported))[:6])}."))
+
+    @staticmethod
+    def _check_identifiers(text: str, question: str, refs: list[str], data_text: str | None,
+                           rep: ValidationReport) -> None:
+        bad = unsupported_identifiers(text, [question, data_text or "", *refs])
+        if bad:
+            rep.issues.append(ValidationIssue(
+                "unsupported_identifier", "error",
+                f"Identifiers not found in the question, data or references: {', '.join(bad[:6])}. "
+                "Do not state any claim, payer or provider identifier that is not given."))
 
     _DIRECTION_RE = re.compile(r"Direction: [^\n]*?\b(increased|decreased|essentially unchanged)\b", re.I)
     _UP_RE = re.compile(r"\b(increas\w*|ros[e]|risen|grew|grown|went up|higher|spike\w*|jump\w*)\b", re.I)
@@ -355,7 +413,7 @@ class ResponseValidator:
     def _check_relevance(text: str, question: str, refs: list[str], rep: ValidationReport) -> None:
         a = content_words(text)
         q = content_words(question) - {"rcm", "revenue", "cycle", "management", "explain", "difference", "define"}
-        if q and not (a & q):
+        if q and not ({_stem(w) for w in a} & {_stem(w) for w in q}):
             rep.issues.append(ValidationIssue("irrelevant", "error", "The answer does not address the question."))
         if refs:
             r = content_words(" ".join(refs))

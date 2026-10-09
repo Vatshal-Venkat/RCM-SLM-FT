@@ -255,4 +255,5 @@ class AnalyticsContextProvider:
         if facts is None:
             return DataContext(f"Claim {claim_id} was not found in the claims database.", {"type": "claim", "found": False})
         return DataContext(facts.fact_sheet, {"type": "claim", "found": True, "claim_id": claim_id,
-                                              "findings": [f.__dict__ for f in facts.findings]})
+                                              "findings": [f.__dict__ for f in facts.findings]},
+                           retrieval_query=facts.retrieval_query)

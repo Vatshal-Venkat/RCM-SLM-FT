@@ -22,6 +22,7 @@ from typing import Protocol
 from starlette.concurrency import run_in_threadpool
 
 from app.ai import prompts
+from app.ai.codes import context_blocks
 from app.ai.intent import Intent, IntentResult, classify
 from app.ai.llm_provider import ChatMessage, GenerationParams, LLMProvider, LLMResult
 from app.ai.postprocess import clean_answer
@@ -206,9 +207,8 @@ class ChatService:
         if self.data_provider is not None and _is_data_intent(intent):
             data = self.data_provider.build(intent, req.message)
         # Codes are looked up, not retrieved: the knowledge base only mentions them in passing.
-        rules = self.validator.term_rules
-        codes = [ContextBlock(0, f"Code reference: {rules[k].name}", rules[k].definition)
-                 for k in intent.terms if k in rules and rules[k].kind == "code"]
+        codes = [ContextBlock(0, f"Code reference: {title}", text)
+                 for title, text in context_blocks(intent.terms, self.validator.term_rules)]
         refs: list[RetrievedChunk] = []
         if req.options.use_rag:
             # Data questions already carry a fact sheet; keep the knowledge context small (CPU prompt cost).

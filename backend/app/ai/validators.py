@@ -237,6 +237,16 @@ def is_definition_question(question: str, terms: list[str] | None = None) -> boo
     return False
 
 
+_SECTION_BREAK_RE = re.compile(
+    r"(?:\*\*)?(?:why it matters|example|recommended[a-z ]*|key drivers|details)\s*:", re.I)
+
+
+def _lead(text_l: str) -> str:
+    """The answer's lead: everything before the first supporting section (Why it matters, …)."""
+    m = _SECTION_BREAK_RE.search(text_l)
+    return text_l[: m.start()] if m else text_l
+
+
 def _expansion_matches(found: str, expected: str) -> bool:
     f = content_words(found.replace("-", " "))
     e = content_words(expected.replace("-", " "))
@@ -334,8 +344,11 @@ class ResponseValidator:
             # meaning is required.
             if key.startswith("group_") and any(t.startswith("carc_") for t in query_terms):
                 explains = False
+            # A code's meaning must be in the answer itself, not only in a later "Recommended
+            # action" (e.g. "CO-16 is a contractual obligation… Action: check for missing information").
+            haystack = _lead(text_l) if rule.kind == "code" else text_l
             if (explains and key in query_terms and rule.required_any
-                    and not any(r in text_l for r in rule.required_any)):
+                    and not any(r in haystack for r in rule.required_any)):
                 rep.issues.append(ValidationIssue(
                     "missing_core_concept", "error",
                     f"Answer about {rule.name} omits its core concept ({' / '.join(rule.required_any[:3])}).", key))

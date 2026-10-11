@@ -1,7 +1,7 @@
 "use client";
 
 import clsx from "clsx";
-import { BookOpen, ChevronDown, CircleCheck, Database, RefreshCcw, ShieldAlert, ShieldCheck } from "lucide-react";
+import { BadgeCheck, BookOpen, ChevronDown, CircleCheck, Database, RefreshCcw, ShieldAlert, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
@@ -9,38 +9,65 @@ import { Pill, SeverityTag } from "@/components/ui/primitives";
 import { num, pct, titleCase, usd } from "@/lib/format";
 import type { Source, Validation } from "@/types/api";
 
+// Issue codes for answers replaced by verified text (validated definition or rule-based claim answer).
+const FALLBACK_CODES = new Set(["validated_fallback", "rule_based_fallback"]);
+
 export function ValidationBadge({ v }: { v?: Validation }) {
   if (!v) return null;
   const errors = v.issues.filter((i) => i.severity === "error").length;
-  const warnings = v.issues.filter((i) => i.severity === "warning").length;
+  const fallback = v.issues.some((i) => FALLBACK_CODES.has(i.code));
+  const warnings = v.issues.filter((i) => i.severity === "warning" && !FALLBACK_CODES.has(i.code)).length;
   if (!v.passed) return <Pill tone="critical"><ShieldAlert className="h-3 w-3" /> Validation failed ({errors})</Pill>;
   return (
     <>
-      <Pill tone="good" title="Checked for hallucinated definitions, KPI formulas, unsupported numbers, PHI, repetition and relevance">
+      <Pill tone="good" title="Checked for hallucinated definitions, code meanings, KPI formulas, unsupported numbers, PHI, repetition and relevance">
         <ShieldCheck className="h-3 w-3" /> Validated{warnings ? ` · ${warnings} warning${warnings > 1 ? "s" : ""}` : ""}
       </Pill>
-      {v.regenerated && <Pill tone="warning" title="The first draft failed validation and was regenerated with stronger grounding"><RefreshCcw className="h-3 w-3" /> Regenerated</Pill>}
+      {fallback ? (
+        <Pill tone="accent" title="The model's drafts failed validation twice, so verified text from the knowledge base or claim record is shown">
+          <BadgeCheck className="h-3 w-3" /> Verified fallback
+        </Pill>
+      ) : v.regenerated && (
+        <Pill tone="warning" title="The first draft failed validation and was regenerated with stronger grounding"><RefreshCcw className="h-3 w-3" /> Regenerated</Pill>
+      )}
     </>
   );
 }
 
-export function SourcesList({ sources }: { sources: Source[] }) {
+// Reference files whose entries are curated authority rather than retrieved passages.
+const VERIFIED_DOCS: Record<string, string> = {
+  "code_reference.yaml": "Code reference",
+  "validated_terms.yaml": "Validated definition",
+};
+
+export function SourcesList({ sources, highlight, idPrefix = "source" }: {
+  sources: Source[]; highlight?: number | null; idPrefix?: string;
+}) {
   if (!sources.length) return null;
   return (
     <ol className="space-y-2">
-      {sources.map((s) => (
-        <li key={`${s.ref}-${s.document}-${s.section}`} className="rounded-xl border border-line bg-surface-2/60 p-3">
-          <div className="flex items-start justify-between gap-3">
-            <p className="text-xs font-medium text-ink">
-              <span className="mr-1.5 rounded bg-accent/15 px-1.5 py-0.5 text-[10px] text-[#b9c2ff]">{s.ref}</span>
-              {s.section ?? s.title}
-            </p>
-            <span className="tabular shrink-0 text-[10px] text-ink-3" title="Cross-encoder relevance">{(s.score * 100).toFixed(0)}%</span>
-          </div>
-          <p className="mt-1 text-[11px] text-ink-3">{s.document}</p>
-          <p className="mt-1.5 line-clamp-3 text-xs leading-relaxed text-ink-2">{s.snippet}</p>
-        </li>
-      ))}
+      {sources.map((s) => {
+        const verified = VERIFIED_DOCS[s.document];
+        return (
+          <li key={`${s.ref}-${s.document}-${s.section}`} id={`${idPrefix}-${s.ref}`}
+            className={clsx("rounded-xl border bg-surface-2/60 p-3 transition-colors",
+              highlight === s.ref ? "border-accent/60 ring-1 ring-accent/30" : "border-line")}>
+            <div className="flex items-start justify-between gap-3">
+              <p className="text-xs font-medium text-ink">
+                <span className="mr-1.5 rounded bg-accent/15 px-1.5 py-0.5 text-[10px] text-[#b9c2ff]">{s.ref}</span>
+                {verified ? s.title.replace(/^(Code reference|Validated definition): /, "") : s.section ?? s.title}
+              </p>
+              {verified ? (
+                <span className="inline-flex shrink-0 items-center gap-1 text-[10px] font-medium text-emerald-300"><BadgeCheck className="h-3 w-3" /> Verified</span>
+              ) : (
+                <span className="tabular shrink-0 text-[10px] text-ink-3" title="Cross-encoder relevance">{(s.score * 100).toFixed(0)}% match</span>
+              )}
+            </div>
+            <p className="mt-1 text-[11px] text-ink-3">{verified ?? s.document}</p>
+            <p className="mt-1.5 line-clamp-3 text-xs leading-relaxed text-ink-2">{s.snippet}</p>
+          </li>
+        );
+      })}
     </ol>
   );
 }
@@ -128,9 +155,21 @@ export function DataView({ data }: { data: Record<string, unknown> }) {
   }
   if (type === "kpi_summary") {
     const c = data.current as Row, p = data.previous as Row;
+    const period = data.requested_period as { label: string } | undefined;
+    const range = data.period as { start: string; end: string } | undefined;
     const keys: [string, string, (v: number) => string][] = [["denial_rate", "Denial rate", pct], ["clean_claim_rate", "Clean claim rate", pct],
       ["first_pass_resolution_rate", "First pass resolution", pct], ["days_in_ar", "Days in AR", (v) => v?.toFixed(1)], ["outstanding_ar", "Outstanding AR", usd]];
-    return table(["KPI", "Previous", "Current"], keys.map(([k, l, f]) => [l, f(p[k] as number), f(c[k] as number)]));
+    const adjudicated = c.adjudicated_claims as number, total = c.total_claims as number;
+    return (
+      <div className="space-y-2">
+        <p className="text-xs text-ink-2">
+          <b className="text-ink">{period?.label ?? "Selected period"}</b>
+          {range && <> · claims submitted {range.start} to {range.end}</>}
+          {total > 0 && adjudicated < total && <> · {num(adjudicated)} of {num(total)} claims decided so far</>}
+        </p>
+        {table(["KPI", "Previous", "Current"], keys.map(([k, l, f]) => [l, f(p[k] as number), f(c[k] as number)]))}
+      </div>
+    );
   }
   if (type === "claim" && data.found) {
     return <Link href={`/claims/${data.claim_id}`} className="text-xs text-accent hover:underline">Open claim {String(data.claim_id)} →</Link>;

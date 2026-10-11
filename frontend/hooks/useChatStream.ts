@@ -5,11 +5,18 @@ import { useCallback, useRef, useState } from "react";
 import { postSSE } from "@/lib/api";
 import type { IntentInfo, Source, Validation } from "@/types/api";
 
+/** Where an answer is in the pipeline, from the stream's own events:
+ *  routing (before `meta`) -> evidence (meta received) -> writing (tokens) -> done. */
+export type ChatPhase = "routing" | "evidence" | "writing" | "done";
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
   streaming?: boolean;
+  phase?: ChatPhase;
+  startedAt?: number;
+  lastTokenAt?: number;
   intent?: IntentInfo;
   sources?: Source[];
   grounded?: boolean;
@@ -48,7 +55,8 @@ export function useChatStream() {
         .map((m) => ({ role: m.role, content: m.content.slice(0, 4000) }));
       const userMsg: ChatMessage = { id: uid(), role: "user", content: question };
       const botId = uid();
-      setMessages((ms) => [...ms, userMsg, { id: botId, role: "assistant", content: "", streaming: true }]);
+      setMessages((ms) => [...ms, userMsg,
+        { id: botId, role: "assistant", content: "", streaming: true, phase: "routing", startedAt: Date.now() }]);
       setBusy(true);
       const ctrl = new AbortController();
       abortRef.current = ctrl;
@@ -58,6 +66,7 @@ export function useChatStream() {
           if (ev.event === "meta") {
             patch(botId, (m) => ({
               ...m,
+              phase: "evidence",
               intent: d.intent as IntentInfo,
               sources: d.sources as Source[],
               grounded: d.grounded as boolean,
@@ -65,7 +74,7 @@ export function useChatStream() {
               data: (d.data as Record<string, unknown>) ?? null,
             }));
           } else if (ev.event === "token") {
-            patch(botId, (m) => ({ ...m, content: m.content + (d.text as string) }));
+            patch(botId, (m) => ({ ...m, phase: "writing", lastTokenAt: Date.now(), content: m.content + (d.text as string) }));
           } else if (ev.event === "replace") {
             patch(botId, (m) => ({
               ...m,
@@ -75,7 +84,7 @@ export function useChatStream() {
             }));
           } else if (ev.event === "done") {
             const t = d.timings_ms as { total: number } | undefined;
-            patch(botId, (m) => ({ ...m, streaming: false, validation: d.validation as Validation, totalMs: t?.total }));
+            patch(botId, (m) => ({ ...m, streaming: false, phase: "done", validation: d.validation as Validation, totalMs: t?.total }));
           }
         }
       } catch (e) {
@@ -83,10 +92,11 @@ export function useChatStream() {
         patch(botId, (m) => ({
           ...m,
           streaming: false,
+          phase: "done",
           error: err.name === "AbortError" ? "Stopped." : err.message || "The assistant is unavailable.",
         }));
       } finally {
-        patch(botId, (m) => ({ ...m, streaming: false }));
+        patch(botId, (m) => ({ ...m, streaming: false, phase: "done" }));
         setBusy(false);
         abortRef.current = null;
       }

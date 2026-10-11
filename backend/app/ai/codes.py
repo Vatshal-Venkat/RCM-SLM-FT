@@ -85,6 +85,29 @@ def load_code_rules(path: Path = CODE_REFERENCE_PATH) -> dict[str, TermRule]:
     return rules
 
 
+def context_blocks(keys: list[str], rules: dict[str, TermRule]) -> list[tuple[str, str]]:
+    """(title, text) per code for the prompt, in question order.
+
+    A group code that only prefixes a CARC ("CO-16" -> carc_16, group_co, adjacent in detect_codes
+    order) is folded into that CARC's entry: as a separate block the model tends to define the
+    group (CO = contractual obligation) and skip what reason code 16 means."""
+    out: list[tuple[str, str]] = []
+    code_keys = [k for k in keys if k in rules and rules[k].kind == "code"]
+    for i, key in enumerate(code_keys):
+        prev = code_keys[i - 1] if i else None
+        if key.startswith("group_") and prev and prev.startswith("carc_"):
+            continue  # folded into the CARC before it
+        nxt = code_keys[i + 1] if i + 1 < len(code_keys) else None
+        if key.startswith("carc_") and nxt and nxt.startswith("group_"):
+            group, code = nxt.removeprefix("group_").upper(), key.removeprefix("carc_").upper()
+            out.append((f"{group}-{code}",
+                        f"{group}-{code} is CARC {code} reported with group code {group}. {rules[key].definition} "
+                        f"About the group code: {rules[nxt].definition}"))
+        else:
+            out.append((rules[key].name, rules[key].definition))
+    return out
+
+
 def _tokens_after(text: str, pos: int, token_re: re.Pattern[str]) -> list[str]:
     """Code tokens directly following `pos`, allowing lists ("16, 29 and 50")."""
     out = []

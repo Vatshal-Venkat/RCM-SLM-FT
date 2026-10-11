@@ -72,10 +72,34 @@ def test_code_definition_is_pinned_first_and_cited_as_source():
     svc = _service(llm, FakeRetriever([_hit("denials_and_rejections.md", "Codes", 0.9)]))
     resp = asyncio.run(svc.answer(ChatRequest(message="What does denial code CO-16 mean?")))
     prompt = llm.calls[0][-1].content
-    assert prompt.index("[1] Code reference: CARC 16") < prompt.index("denials_and_rejections")
-    assert [s.document for s in resp.sources][:2] == ["code_reference.yaml", "code_reference.yaml"]
+    assert prompt.index("[1] Code reference: CO-16") < prompt.index("denials_and_rejections")
+    assert resp.sources[0].document == "code_reference.yaml" and resp.sources[1].document != "code_reference.yaml"
     assert [s.ref for s in resp.sources] == list(range(1, len(resp.sources) + 1))
     assert resp.validation.passed and not resp.validation.regenerated
+
+
+def test_group_prefix_is_folded_into_its_carc():
+    from app.ai.codes import context_blocks
+
+    rules = V.term_rules
+    blocks = context_blocks(["carc_16", "group_co", "carc_1", "group_pr"], rules)
+    assert [t for t, _ in blocks] == ["CO-16", "PR-1"]
+    assert blocks[0][1].startswith("CO-16 is CARC 16 reported with group code CO.")
+    assert "lacks information" in blocks[0][1] and "Contractual Obligation" in blocks[0][1]
+    # Group codes asked about on their own stay separate entries.
+    assert [t for t, _ in context_blocks(["group_co", "group_pr"], rules)] == [
+        "Group code CO (Contractual Obligation)", "Group code PR (Patient Responsibility)"]
+
+
+def test_code_meaning_must_be_in_the_lead_not_only_in_the_action():
+    # A live answer: it defined the group code and left CARC 16's meaning to the action.
+    wrong = ("**Answer:** CO-16 is a group code indicating Contractual Obligation. The provider writes it off and may "
+             "not bill the patient for it.\n\n**Recommended action:** Check for missing information and resubmit.")
+    rep = V.validate(wrong, "What does CO-16 mean?", ["carc_16", "group_co"])
+    assert any(i.code == "missing_core_concept" and i.term == "carc_16" for i in rep.issues)
+    right = ("**Answer:** CO-16 means the claim lacks information or has a billing error.\n\n"
+             "**Recommended action:** Add the missing information and resubmit a corrected claim.")
+    assert V.validate(right, "What does CO-16 mean?", ["carc_16", "group_co"]).passed
 
 
 def test_code_contradicted_twice_falls_back_to_code_reference():

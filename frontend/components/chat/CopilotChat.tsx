@@ -9,8 +9,9 @@ import remarkGfm from "remark-gfm";
 
 import { Collapsible, DataView, ExplainIcons, IssuesList, SourcesList, ValidationBadge } from "@/components/chat/Explain";
 import { Card, Pill } from "@/components/ui/primitives";
-import { type ChatMessage, useChatStream } from "@/hooks/useChatStream";
+import { type ChatMessage, type ChatOptions, useChatStream } from "@/hooks/useChatStream";
 import { titleCase } from "@/lib/format";
+import { type CopilotPrefs, getPrefs, usePrefs } from "@/lib/preferences";
 
 // Mirrors the backend's chat_max_message_chars.
 const MAX_CHARS = 2000;
@@ -30,7 +31,10 @@ const INTENT_LABELS: Record<string, string> = {
 export function CopilotChat() {
   const { messages, busy, send, stop, reset } = useChatStream();
   const [draft, setDraft] = useState("");
-  const [useRag, setUseRag] = useState(true);
+  const prefs = usePrefs();
+  // The toggle starts from the Settings default; a change here applies to this chat only.
+  const [ragOverride, setRagOverride] = useState<boolean | null>(null);
+  const useRag = ragOverride ?? prefs.useRag;
   const params = useSearchParams();
   const router = useRouter();
   const autoSent = useRef(false);
@@ -41,16 +45,18 @@ export function CopilotChat() {
     const q = text.trim();
     if (!q || busy || q.length > MAX_CHARS) return;
     setDraft("");
-    void send(q, { use_rag: useRag });
+    void send(q, chatOptions(prefs, useRag));
   };
 
   // Questions linked from the dashboard arrive as /copilot?q=...; ask once, then drop the
-  // parameter so a refresh does not ask again.
+  // parameter so a refresh does not ask again. Preferences are read directly: on first render
+  // the hook still holds the server defaults.
   useEffect(() => {
     const q = params.get("q");
     if (!q || autoSent.current) return;
     autoSent.current = true;
-    void send(q.slice(0, MAX_CHARS), { use_rag: true });
+    const p = getPrefs();
+    void send(q.slice(0, MAX_CHARS), chatOptions(p, p.useRag));
     router.replace("/copilot");
   }, [params, router, send]);
 
@@ -109,7 +115,7 @@ export function CopilotChat() {
           </div>
           <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-ink-3">
             <label className="inline-flex cursor-pointer items-center gap-1.5">
-              <input type="checkbox" checked={useRag} onChange={(e) => setUseRag(e.target.checked)} className="accent-[var(--accent)]" />
+              <input type="checkbox" checked={useRag} onChange={(e) => setRagOverride(e.target.checked)} className="accent-[var(--accent)]" />
               Ground answers in the RCM knowledge base
             </label>
             <span className="flex items-center gap-3">
@@ -231,6 +237,10 @@ function AssistantMessage({ m }: { m: ChatMessage }) {
       </div>
     </div>
   );
+}
+
+function chatOptions(p: CopilotPrefs, useRag: boolean): ChatOptions {
+  return { use_rag: useRag, temperature: p.temperature ?? undefined, max_tokens: p.maxTokens ?? undefined };
 }
 
 function hasDataView(data: Record<string, unknown>): boolean {

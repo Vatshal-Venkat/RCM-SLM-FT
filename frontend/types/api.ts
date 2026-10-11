@@ -275,6 +275,28 @@ export interface RagHit {
   lexical_score: number;
 }
 
+export interface RagSearchResponse {
+  query: string;
+  results: RagHit[];
+  took_ms: number;
+}
+
+export interface PaymentsAnalytics {
+  period: Period;
+  over_time: MonthlyPayments[];
+  ar_over_time: MonthlyAR[];
+}
+
+export interface PayersAnalytics {
+  period: Period;
+  payers: EntityPerformance[];
+}
+
+export interface ProvidersAnalytics {
+  period: Period;
+  providers: EntityPerformance[];
+}
+
 export interface Filters {
   start_date?: string;
   end_date?: string;

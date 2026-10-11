@@ -2,7 +2,7 @@
 
 import { ArrowLeft, Bot, Sparkles } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -13,6 +13,12 @@ import { useApi } from "@/hooks/useApi";
 import { apiPost } from "@/lib/api";
 import { dateLabel, titleCase, usd } from "@/lib/format";
 import type { ClaimAnalysis, ClaimDetail } from "@/types/api";
+
+/** /claims/[id] entry point: reads the claim ID from the route. */
+export function ClaimRoute() {
+  const { id } = useParams<{ id: string }>();
+  return <ClaimDetailView claimId={decodeURIComponent(id)} />;
+}
 
 export function ClaimDetailView({ claimId }: { claimId: string }) {
   const router = useRouter();

@@ -56,6 +56,10 @@ class DataContext:
     # Knowledge-base query built from the data itself (e.g. a claim's CARC and status), used
     # instead of the question wording so retrieval matches the specific situation.
     retrieval_query: str | None = None
+    # Deterministic answer shown when the model's answer fails validation twice (claim questions).
+    fallback: str | None = None
+    # Words the answer must not contain, e.g. other payers' names in an answer about one claim.
+    avoid: list[str] = field(default_factory=list)
 
 
 class DataContextProvider(Protocol):
@@ -66,6 +70,11 @@ class DataContextProvider(Protocol):
 class _Grounding:
     references: list[RetrievedChunk]
     data: DataContext | None
+    # Code definitions (CO-16, modifier 25) from code_reference.yaml, given to the model first.
+    codes: list[ContextBlock] = field(default_factory=list)
+
+    def reference_texts(self) -> list[str]:
+        return [b.text for b in self.codes] + [r.chunk.text for r in self.references]
 
 
 @dataclass
@@ -122,7 +131,8 @@ class ChatService:
         )
         resp = self._response(
             draft.text, intent, grounding.references, draft.report, draft.regenerated, draft.result, timings,
-            grounded=bool(grounding.references or grounding.data or draft.pinned), pinned=draft.pinned,
+            grounded=bool(grounding.references or grounding.data or grounding.codes or draft.pinned),
+            pinned=draft.pinned, codes=grounding.codes,
         )
         resp.data = grounding.data.payload if grounding.data else None
         return resp
@@ -141,8 +151,8 @@ class ChatService:
 
         yield _sse("meta", {
             "intent": _intent_out(intent).model_dump(),
-            "sources": [s.model_dump() for s in _sources_out(grounding.references)],
-            "grounded": bool(grounding.references or grounding.data),
+            "sources": [s.model_dump() for s in _sources_out(grounding.references, codes=grounding.codes)],
+            "grounded": bool(grounding.references or grounding.data or grounding.codes),
             "model": None if canned else self.llm.info().name,
             "data": grounding.data.payload if grounding.data else None,
         })
@@ -176,7 +186,7 @@ class ChatService:
             yield _sse("replace", {
                 "text": final.text,
                 "reason": report.correction_hint() or "cleaned formatting",
-                "sources": [s.model_dump() for s in _sources_out(grounding.references, final.pinned)],
+                "sources": [s.model_dump() for s in _sources_out(grounding.references, final.pinned, grounding.codes)],
             })
         yield _sse("done", {
             "validation": _validation_out(final.report, final.regenerated).model_dump(),
@@ -195,20 +205,26 @@ class ChatService:
         data = None
         if self.data_provider is not None and _is_data_intent(intent):
             data = self.data_provider.build(intent, req.message)
+        # Codes are looked up, not retrieved: the knowledge base only mentions them in passing.
+        rules = self.validator.term_rules
+        codes = [ContextBlock(0, f"Code reference: {rules[k].name}", rules[k].definition)
+                 for k in intent.terms if k in rules and rules[k].kind == "code"]
         refs: list[RetrievedChunk] = []
         if req.options.use_rag:
             # Data questions already carry a fact sheet; keep the knowledge context small (CPU prompt cost).
             k = 2 if data else self.settings.rag_top_k
+            # Code definitions take part of the context budget.
+            k = max(2, k - len(codes))
             # "Why was CLM-001234 denied?" says nothing about *why*; the claim's CARC and status do.
             # Pinned definitions still follow the question's own terms, so they don't crowd out
             # the situation-specific passages in the small data-question context.
             query = data.retrieval_query if data and data.retrieval_query else req.message
             refs = retrieve_context(self.retriever, query, k=k, terms=intent.terms)
-        return _Grounding(refs, data)
+        return _Grounding(refs, data, codes)
 
     def _out_of_scope_by_retrieval(self, intent: IntentResult, g: _Grounding) -> bool:
         # A query with no RCM vocabulary is only answered if the knowledge base finds it relevant.
-        if intent.confidence >= 0.5 or self.retriever is None or not self.retriever.is_ready():
+        if intent.confidence >= 0.5 or g.codes or self.retriever is None or not self.retriever.is_ready():
             return False
         top = max((r.score for r in g.references), default=0.0)
         return top < MIN_RELEVANCE_FOR_UNKNOWN and g.data is None
@@ -226,22 +242,33 @@ class ChatService:
     def _messages(self, req: ChatRequest, g: _Grounding, extra_refs: list[ContextBlock] | None = None,
                   correction: str | None = None) -> list[ChatMessage]:
         history = [ChatMessage(h.role, h.content) for h in req.history[-2 * self.settings.chat_max_history_turns:]]
-        blocks = [ContextBlock(i + 1, _ref_title(r), r.chunk.text) for i, r in enumerate(g.references)]
-        # Extra (pinned) references are numbered after the retrieved ones so citations stay stable.
-        blocks += [ContextBlock(len(blocks) + i + 1, b.title, b.text) for i, b in enumerate(extra_refs or [])]
+        # Numbering matches _sources_out: code references, retrieved passages, then extra (pinned)
+        # references, which come last so citations to the first draft's references stay stable.
+        ordered = [*g.codes, *(ContextBlock(0, _ref_title(r), r.chunk.text) for r in g.references), *(extra_refs or [])]
+        blocks = [ContextBlock(i + 1, b.title, b.text) for i, b in enumerate(ordered)]
         return prompts.build_messages(
             req.message, history=history, references=blocks or None,
             data_context=g.data.text if g.data else None, correction=correction,
-            format_instructions=prompts.FORMAT_ANALYTICS if g.data else prompts.FORMAT_KNOWLEDGE,
+            format_instructions=(prompts.FORMAT_CLAIM_CHAT if g.data and g.data.payload.get("type") == "claim"
+                                 else prompts.FORMAT_ANALYTICS if g.data else prompts.FORMAT_KNOWLEDGE),
         )
 
-    def _validate(self, text: str, question: str, intent: IntentResult, g: _Grounding, finish: str) -> ValidationReport:
-        return self.validator.validate(
+    def _validate(self, text: str, question: str, intent: IntentResult, g: _Grounding, finish: str,
+                  extra_refs: list[str] | None = None) -> ValidationReport:
+        report = self.validator.validate(
             text, question, intent.terms,
-            reference_texts=[r.chunk.text for r in g.references],
+            reference_texts=g.reference_texts() + (extra_refs or []),
             data_text=g.data.text if g.data else None,
             finish_reason=finish,
         )
+        text_l = text.lower()
+        for word in g.data.avoid if g.data else []:
+            if word.lower() in text_l:
+                report.issues.append(ValidationIssue(
+                    "off_record_entity", "error",
+                    f"The answer mentions {word}, which is not part of this claim's record; use only this claim's "
+                    "payer and facts."))
+        return report
 
     def _generate_validated(self, req: ChatRequest, intent: IntentResult, g: _Grounding) -> _Draft:
         result = self.llm.generate(self._messages(req, g), self._params(req))
@@ -254,16 +281,16 @@ class ChatService:
         """One regeneration with validated definitions pinned first, then a verbatim fallback."""
         rules = self.validator.term_rules
         term_keys = {i.term for i in draft.report.term_errors} | set(intent.terms)
+        # Code definitions are already in the context (g.codes); only terms are added here.
         pinned = [ContextBlock(0, f"Validated definition: {rules[k].name}", rules[k].definition)
-                  for k in sorted(term_keys) if k in rules]
+                  for k in sorted(term_keys) if k in rules and rules[k].kind != "code"]
         messages = self._messages(req, g, extra_refs=pinned, correction=draft.report.correction_hint())
         params = self._params(req)
         params = GenerationParams(**{**params.__dict__, "temperature": min(params.temperature, 0.1)})
         result = self.llm.generate(messages, params)
         result.text = clean_answer(result.text, req.message)
-        refs_text = [r.chunk.text for r in g.references] + [b.text for b in pinned]
-        report = self.validator.validate(result.text, req.message, intent.terms, refs_text,
-                                         g.data.text if g.data else None, result.finish_reason)
+        report = self._validate(result.text, req.message, intent, g, result.finish_reason,
+                                extra_refs=[b.text for b in pinned])
         # Keep the rejected draft's errors visible: they explain why the answer was regenerated.
         report.issues[:0] = [
             ValidationIssue(f"draft_{i.code}", "info", f"Initial draft rejected: {i.message}")
@@ -272,15 +299,23 @@ class ChatService:
         if report.passed:
             return _Draft(result.text, result, report, regenerated=True, pinned=pinned)
 
-        if report.term_errors and pinned and g.data is None:
+        authority = g.codes + pinned
+        if report.term_errors and authority and g.data is None:
             # Knowledge question where the model contradicted the knowledge base twice: return the
             # validated definitions verbatim. (Data answers are never replaced by a definition; their
             # remaining issues stay visible in the validation report instead.)
-            body = "\n\n".join(f"**{b.title.removeprefix('Validated definition: ')}:** {b.text}" for b in pinned)
+            body = "\n\n".join(f"**{_definition_title(b.title)}:** {b.text}" for b in authority)
             text = ("The generated answer did not match the validated RCM definitions, so the knowledge-base "
                     f"definition is shown instead.\n\n{body}")
             report.issues.append(_fallback_issue())
             return _Draft(text, result, _strip_term_errors(report), regenerated=True, fallback=True, pinned=pinned)
+        if g.data is not None and g.data.fallback:
+            # A data answer that failed twice is replaced by the deterministic answer built from the
+            # same record (claim questions), never shown with known errors.
+            report.issues.append(ValidationIssue(
+                "rule_based_fallback", "warning",
+                "The model's answer failed validation twice; the rule-based answer from the record is shown instead."))
+            return _Draft(g.data.fallback, result, _demote_errors(report), regenerated=True, fallback=True, pinned=pinned)
         return _Draft(result.text, result, report, regenerated=True, pinned=pinned)
 
     @staticmethod
@@ -290,8 +325,7 @@ class ChatService:
         flagged = [i for i in draft.report.issues if i.code == "unsupported_identifier" and i.severity == "error"]
         if not flagged:
             return draft
-        sources = [req.message, g.data.text if g.data else "",
-                   *(r.chunk.text for r in g.references), *(b.text for b in draft.pinned)]
+        sources = [req.message, g.data.text if g.data else "", *g.reference_texts(), *(b.text for b in draft.pinned)]
         draft.text = redact_identifiers(draft.text, sources)
         for i in flagged:
             i.severity = "warning"
@@ -301,11 +335,11 @@ class ChatService:
     # ------------------------------------------------------------------ response assembly
     def _response(self, text: str, intent: IntentResult, refs: list[RetrievedChunk], report: ValidationReport,
                   regenerated: bool, result: LLMResult | None, timings: dict[str, float], grounded: bool,
-                  pinned: list[ContextBlock] | None = None) -> ChatResponse:
+                  pinned: list[ContextBlock] | None = None, codes: list[ContextBlock] | None = None) -> ChatResponse:
         return ChatResponse(
             answer=text,
             intent=_intent_out(intent),
-            sources=_sources_out(refs, pinned),
+            sources=_sources_out(refs, pinned, codes),
             validation=_validation_out(report, regenerated),
             grounded=grounded,
             model=result.model if result else None,
@@ -345,17 +379,28 @@ def _snippet(text: str) -> str:
     return text[:280] + ("..." if len(text) > 280 else "")
 
 
-def _sources_out(refs: list[RetrievedChunk], pinned: list[ContextBlock] | None = None) -> list[SourceOut]:
+def _definition_title(title: str) -> str:
+    return title.removeprefix("Validated definition: ").removeprefix("Code reference: ")
+
+
+def _sources_out(refs: list[RetrievedChunk], pinned: list[ContextBlock] | None = None,
+                 codes: list[ContextBlock] | None = None) -> list[SourceOut]:
+    """Sources numbered as in ChatService._messages: codes, retrieved passages, pinned definitions."""
     out = [
-        SourceOut(ref=i + 1, title=r.chunk.title, document=r.chunk.document, section=r.chunk.section,
-                  score=round(r.score, 3), snippet=_snippet(r.chunk.text))
-        for i, r in enumerate(refs)
+        SourceOut(ref=0, title=b.title, document="code_reference.yaml", section=None, score=1.0, snippet=_snippet(b.text))
+        for b in codes or []
     ]
     out += [
-        SourceOut(ref=len(refs) + i + 1, title=b.title, document="validated_terms.yaml", section=None,
-                  score=1.0, snippet=_snippet(b.text))
-        for i, b in enumerate(pinned or [])
+        SourceOut(ref=0, title=r.chunk.title, document=r.chunk.document, section=r.chunk.section,
+                  score=round(r.score, 3), snippet=_snippet(r.chunk.text))
+        for r in refs
     ]
+    out += [
+        SourceOut(ref=0, title=b.title, document="validated_terms.yaml", section=None, score=1.0, snippet=_snippet(b.text))
+        for b in pinned or []
+    ]
+    for i, s in enumerate(out):
+        s.ref = i + 1
     return out
 
 
@@ -370,6 +415,16 @@ def _validation_out(report: ValidationReport, regenerated: bool) -> ValidationOu
 def _fallback_issue() -> ValidationIssue:
     return ValidationIssue("validated_fallback", "warning",
                            "Model output contradicted validated definitions twice; returned the knowledge-base definition.")
+
+
+def _demote_errors(report: ValidationReport) -> ValidationReport:
+    # The fallback text replaces the model's answer, so its errors no longer apply to what is shown;
+    # they stay visible as warnings.
+    for i in report.issues:
+        if i.severity == "error":
+            i.severity = "warning"
+            i.message = f"(rejected draft) {i.message}"
+    return report
 
 
 def _strip_term_errors(report: ValidationReport) -> ValidationReport:

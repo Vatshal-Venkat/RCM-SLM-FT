@@ -12,11 +12,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import replace
-from datetime import timedelta
+from datetime import date, timedelta
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.ai.intent import Intent, IntentResult
+from app.ai.periods import Period, parse_period
 from app.analytics import insights
 from app.analytics.filters import AnalyticsFilters, dataset_as_of
 from app.db.session import get_sessionmaker
@@ -64,6 +66,20 @@ def detect_entities(q: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
     return payers, providers
 
 
+def _with_period_note(ctx: DataContext, period: Period, as_of: date) -> DataContext:
+    """Head the fact sheet with the period the user asked for, so the answer is labelled with it."""
+    notes = [f"Requested period: {period.label} (claims submitted {period.start} to {period.end}). "
+             "Name this period in the answer."]
+    if period.partial:
+        notes.append(f"This period is still in progress: data runs only to {as_of}.")
+    if period.start <= as_of and (as_of - period.end).days < insights.MATURITY_LAG_DAYS:
+        notes.append("Most claims submitted in the last 30 days are not yet adjudicated, so outcome rates for this "
+                     "period are provisional and may change.")
+    payload = {**ctx.payload, "requested_period": {"label": period.label, "start": period.start.isoformat(),
+                                                   "end": period.end.isoformat(), "partial": period.partial}}
+    return replace(ctx, text="\n".join([*notes, ctx.text]), payload=payload)
+
+
 def detect_window_days(q: str, default: int = 90) -> int:
     ql = q.lower()
     m = re.search(r"last (\d{1,3}) (day|week|month)s?", ql)
@@ -91,32 +107,47 @@ class AnalyticsContextProvider:
     def _analytics(self, db: Session, q: str) -> DataContext:
         ql = q.lower()
         payers, providers = detect_entities(q)
-        days = detect_window_days(q)
-        end = dataset_as_of(db)
+        as_of = dataset_as_of(db)
+        # A named period ("September 2026", "Q2") wins over relative windows ("last 30 days").
+        period = parse_period(q, as_of)
+        if period:
+            days = (period.end - period.start).days + 1
+            end = period.end
+        else:
+            days = detect_window_days(q)
+            end = as_of
         base = AnalyticsFilters(start_date=end - timedelta(days=days - 1), end_date=end,
                                 payer_ids=payers, provider_ids=providers)
+        # Rankings and cause breakdowns need volume, so relative windows are widened to 180 days;
+        # an explicitly named period is used as asked.
+        wide = base if period else replace(base, start_date=end - timedelta(days=max(days, 180) - 1))
 
         if re.search(r"priorit|work first|follow.?up first|which claims should", ql):
-            return self._prioritize(db, base)
-        if re.search(r"\b(a/?r|accounts receivable|days in ar)\b", ql) and re.search(r"increas|grow|rising|caus|driv|why|up\b", ql):
-            return self._ar_drivers(db, days)
-        if re.search(r"denial", ql) and re.search(r"increas|rise|rising|went up|go up|grow|why did|spike|jump|chang", ql):
-            return self._denial_drivers(db, days, base)
-        if re.search(r"(highest|lowest|worst|best|most|least|rank|compare|top)", ql) and re.search(r"payer|payor|insur|provider|practice|clinic", ql):
+            ctx = self._prioritize(db, base)
+        elif re.search(r"\b(a/?r|accounts receivable|days in ar)\b", ql) and re.search(r"increas|grow|rising|caus|driv|why|up\b", ql):
+            ctx = self._ar_drivers(db, days, end if period else None)
+        elif re.search(r"denial", ql) and re.search(r"increas|rise|rising|went up|go up|grow|why did|spike|jump|chang", ql):
+            ctx = self._denial_drivers(db, days, base, end if period else None)
+        elif re.search(r"(highest|lowest|worst|best|most|least|rank|compare|top)", ql) and re.search(r"payer|payor|insur|provider|practice|clinic", ql):
             dim = "provider" if re.search(r"provider|practice|clinic", ql) else "payer"
             metric = ("avg_days_to_adjudicate" if re.search(r"slow|days to (pay|adjudicat)|fast", ql)
                       else "outstanding_ar" if re.search(r"\bar\b|receivable|outstanding", ql)
                       else "clean_claim_rate" if "clean" in ql
                       else "denial_rate")
             lowest = bool(re.search(r"lowest|best|least", ql)) != (metric == "clean_claim_rate")
-            return self._ranking(db, dim, metric, replace(base, start_date=end - timedelta(days=max(days, 180) - 1)), lowest)
-        if re.search(r"(cause|reason|driver|why).*(denial|denied)|denial.*(cause|reason)|top denial", ql):
-            return self._denial_causes(db, replace(base, start_date=end - timedelta(days=max(days, 180) - 1)))
-        return self._kpi_summary(db, base)
+            ctx = self._ranking(db, dim, metric, wide, lowest)
+        elif re.search(r"(cause|reason|driver|why).*(denial|denied)|denial.*(cause|reason)|top denial", ql):
+            ctx = self._denial_causes(db, wide)
+        else:
+            ctx = self._kpi_summary(db, base)
+        if period:
+            ctx = _with_period_note(ctx, period, as_of)
+        return ctx
 
     # ------------------------------------------------------------------ fact sheets
-    def _denial_drivers(self, db: Session, days: int, base: AnalyticsFilters) -> DataContext:
-        r = insights.denial_rate_change(db, days, AnalyticsFilters(payer_ids=base.payer_ids, provider_ids=base.provider_ids))
+    def _denial_drivers(self, db: Session, days: int, base: AnalyticsFilters, end: date | None = None) -> DataContext:
+        r = insights.denial_rate_change(db, days, AnalyticsFilters(payer_ids=base.payer_ids, provider_ids=base.provider_ids),
+                                        end=end)
         trend = insights.denial_trend(db, months=6)
         change = r["change_pts"]
         direction = "increased" if change > 0.2 else "decreased" if change < -0.2 else "was essentially unchanged"
@@ -136,8 +167,9 @@ class AnalyticsContextProvider:
             "KEY FINDINGS (state these first):", *[f"{i + 1}. {s}" for i, s in enumerate(findings)],
             f"Direction: the denial rate {direction}.",
             f"Periods compared: claims submitted {r['previous_period']['start']} to {r['previous_period']['end']} vs "
-            f"{r['current_period']['start']} to {r['current_period']['end']} (claims from the last "
-            f"{r['maturity_lag_days']} days are excluded because most are not yet adjudicated).",
+            f"{r['current_period']['start']} to {r['current_period']['end']}"
+            + (f" (claims from the last {r['maturity_lag_days']} days are excluded because most are not yet adjudicated)."
+               if r["maturity_lag_days"] else "."),
             "Monthly denial rate: " + "; ".join(f"{t['month']} {_p(t['denial_rate'])}" for t in trend) + ".",
             "Payer contributions (percentage points of the overall change):",
             *[f"- {x['payer']}: {_p(x['denial_rate_before'])} -> {_p(x['denial_rate_now'])}, {_signed(x['contribution_pts'])}"
@@ -148,8 +180,8 @@ class AnalyticsContextProvider:
         ]
         return DataContext("\n".join(lines), {"type": "denial_drivers", **r, "trend": trend})
 
-    def _ar_drivers(self, db: Session, days: int) -> DataContext:
-        r = insights.ar_change(db, days)
+    def _ar_drivers(self, db: Session, days: int, end: date | None = None) -> DataContext:
+        r = insights.ar_change(db, days, end=end)
         direction = "increased" if r["ar_change"] > 0 else "decreased"
         top_payer = r["by_payer"][0]
         slow = r["payer_speed"][0]
@@ -240,6 +272,11 @@ class AnalyticsContextProvider:
         r = insights.kpi_summary(db, f)
         c, p = r["current"], r["previous"]
         lines = [f"Question type: KPI summary, claims submitted {f.start_date} to {f.end_date} (vs previous equal period)."]
+        if not c["total_claims"]:
+            lines.append("No claims were submitted in this period, so there are no figures for it.")
+        elif c["adjudicated_claims"] < c["total_claims"]:
+            lines.append(f"Adjudicated so far: {c['adjudicated_claims']} of {c['total_claims']} claims; rates cover "
+                         "adjudicated claims only.")
         for key, label, fmt in [("total_claims", "Total claims", str), ("denial_rate", "Denial rate", _p),
                                 ("clean_claim_rate", "Clean claim rate", _p),
                                 ("first_pass_resolution_rate", "First pass resolution rate", _p),
@@ -249,11 +286,17 @@ class AnalyticsContextProvider:
         return DataContext("\n".join(lines), {"type": "kpi_summary", **r})
 
     def _claim(self, db: Session, claim_id: str) -> DataContext | None:
-        from app.services.claim_analysis import analyze_claim_facts
+        from app.models.rcm import Payer
+        from app.services.claim_analysis import analyze_claim_facts, rule_based_chat_answer
 
         facts = analyze_claim_facts(db, claim_id)
         if facts is None:
             return DataContext(f"Claim {claim_id} was not found in the claims database.", {"type": "claim", "found": False})
+        # Knowledge passages describe other payers' rules (e.g. Medicare's 12-month filing limit); an
+        # answer about this claim must not apply them.
+        sheet = facts.fact_sheet.lower()
+        avoid = [p.name for p in db.scalars(select(Payer)) if p.id != facts.claim.payer_id]
+        avoid += [w for w in ("Medicare", "Medicaid") if w.lower() not in sheet]
         return DataContext(facts.fact_sheet, {"type": "claim", "found": True, "claim_id": claim_id,
                                               "findings": [f.__dict__ for f in facts.findings]},
-                           retrieval_query=facts.retrieval_query)
+                           retrieval_query=facts.retrieval_query, fallback=rule_based_chat_answer(facts), avoid=avoid)

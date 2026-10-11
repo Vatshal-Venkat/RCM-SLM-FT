@@ -34,9 +34,20 @@ FORMAT_KNOWLEDGE = (
 
 FORMAT_ANALYTICS = (
     "Start directly with **Answer:** (do not repeat the question). Format in Markdown:\n"
-    "**Answer:** 1-2 sentences restating KEY FINDING 1 with its exact figures.\n"
+    "**Answer:** 1-2 sentences restating KEY FINDING 1 with its exact figures, naming the period they cover "
+    "exactly as given in DATA.\n"
     "**Key drivers:** 2-4 bullet points based on the KEY FINDINGS, quoting their figures.\n"
     "**Recommended actions:** 2-3 bullet points that address those specific drivers.\n"
+    "Do not add a Sources section."
+)
+
+FORMAT_CLAIM_CHAT = (
+    "Start directly with **Answer:** (do not repeat the question). Format in Markdown:\n"
+    "**Answer:** 1-2 sentences answering the question from DATA: the claim's status and, for a denial, its CARC "
+    "and what it means.\n"
+    "**Details:** 2-3 bullet points quoting facts from DATA exactly (payer, dates, amounts, rule-based findings).\n"
+    "**Recommended actions:** the rule-based recommended actions from DATA, briefly.\n"
+    "Use only this claim's facts and its payer's rules. Do not state any figure that is not in DATA. "
     "Do not add a Sources section."
 )
 

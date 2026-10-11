@@ -1,0 +1,384 @@
+# Remittance and billing code reference: single source of truth for code-level questions
+# ("What does CO-16 mean?", "What is modifier 25?").
+#
+# When a question names a code listed here, its entry is pinned into the prompt as a reference,
+# the answer is validated against it (required_any), and if the model contradicts it
+# twice the entry is returned verbatim. See app/ai/codes.py.
+#
+# Field reference:
+#   description:   official short description (X12 CARC/RARC lists, AMA CPT / CMS HCPCS modifiers)
+#   meaning:       plain-English explanation for billing staff
+#   group:         group code(s) the CARC is usually reported with (CARCs only)
+#   action:        typical next step
+#   required_any:  an answer about this code must contain at least one (lower-case substring)
+#
+# Official descriptions are abridged where the full text is long. Review changes with an RCM SME.
+
+version: 1
+
+group_codes:
+  CO:
+    name: Contractual Obligation
+    meaning: >
+      The adjustment is the provider's responsibility under its payer contract or regulation. The
+      provider writes it off and may not bill the patient for it.
+    required_any: [contractual]
+  PR:
+    name: Patient Responsibility
+    meaning: >
+      The amount is owed by the patient (for example deductible, coinsurance or copay) and may be
+      billed to the patient or a secondary payer.
+    required_any: [patient]
+  OA:
+    name: Other Adjustment
+    meaning: >
+      An adjustment that is neither contractual nor patient responsibility, most often coordination
+      of benefits or a prior payer's payment.
+    required_any: [other]
+  PI:
+    name: Payer Initiated Reduction
+    meaning: >
+      A reduction the payer made that is not a contractual obligation and not patient
+      responsibility; the provider may dispute it.
+    required_any: [payer]
+
+carcs:
+  "1":
+    description: Deductible amount.
+    meaning: The amount applied to the patient's annual deductible.
+    group: PR
+    action: Bill the patient (or secondary payer) for the deductible amount.
+    required_any: [deductible]
+  "2":
+    description: Coinsurance amount.
+    meaning: The patient's percentage share of the allowed amount.
+    group: PR
+    action: Bill the patient (or secondary payer) for the coinsurance.
+    required_any: [coinsurance]
+  "3":
+    description: Co-payment amount.
+    meaning: The fixed copay the patient owes for the service.
+    group: PR
+    action: Collect the copay from the patient, ideally at the time of service.
+    required_any: [copay, co-pay, co-payment]
+  "4":
+    description: The procedure code is inconsistent with the modifier used.
+    meaning: The modifier billed does not fit the procedure code, or a required modifier is missing.
+    group: CO
+    action: Correct the modifier and submit a corrected claim.
+    required_any: [modifier]
+  "5":
+    description: The procedure code/type of bill is inconsistent with the place of service.
+    meaning: The service is not valid for the place of service billed.
+    group: CO
+    action: Verify and correct the place of service or procedure code, then resubmit.
+    required_any: [place of service]
+  "6":
+    description: The procedure/revenue code is inconsistent with the patient's age.
+    meaning: The billed code does not fit the patient's age on file.
+    group: CO
+    action: Check the patient's date of birth and the code, correct and resubmit.
+    required_any: [age]
+  "11":
+    description: The diagnosis is inconsistent with the procedure.
+    meaning: The diagnosis code on the claim does not support the procedure billed.
+    group: CO
+    action: Review documentation and coding; correct the diagnosis linkage and resubmit, or appeal.
+    required_any: [diagnosis]
+  "15":
+    description: The authorization number is missing, invalid, or does not apply to the billed services or provider.
+    meaning: An authorization exists or was required, but the number on the claim is missing, wrong or does not match the service.
+    group: CO
+    action: Add or correct the authorization number and submit a corrected claim.
+    required_any: [authorization]
+  "16":
+    description: Claim/service lacks information or has submission/billing error(s).
+    meaning: >
+      The claim is missing information or contains a billing error; a RARC usually identifies what is
+      missing or invalid. It is a correctable (soft) denial.
+    group: CO
+    action: Read the accompanying RARC, add or fix the missing information and resubmit a corrected claim.
+    required_any: [lacks information, missing information, missing or invalid, missing, incomplete, billing error]
+  "18":
+    description: Exact duplicate claim/service.
+    meaning: The payer already received or processed the same claim or service line.
+    group: CO
+    action: Check the status of the original claim instead of resubmitting; do not bill it again.
+    required_any: [duplicate]
+  "22":
+    description: This care may be covered by another payer per coordination of benefits.
+    meaning: The payer believes another plan is primary for this patient.
+    group: OA
+    action: Update coordination of benefits (COB) information and bill the correct primary payer.
+    required_any: [another payer, coordination of benefits, other payer, primary]
+  "23":
+    description: The impact of prior payer(s) adjudication including payments and/or adjustments.
+    meaning: The secondary payer reduced its payment because of what the primary payer paid or adjusted.
+    group: OA
+    action: Post the adjustment; no correction is usually needed.
+    required_any: [prior payer, primary, previous payer]
+  "24":
+    description: Charges are covered under a capitation agreement/managed care plan.
+    meaning: The service is already paid through a capitation arrangement.
+    group: CO
+    action: Write off per the capitation contract; do not bill the patient.
+    required_any: [capitation]
+  "26":
+    description: Expenses incurred prior to coverage.
+    meaning: The service date is before the patient's coverage began.
+    group: PR
+    action: Verify eligibility dates; bill the correct payer or the patient.
+    required_any: [prior to coverage, before coverage, before the patient's coverage]
+  "27":
+    description: Expenses incurred after coverage terminated.
+    meaning: The service date is after the patient's coverage ended.
+    group: PR
+    action: Verify eligibility; bill the active payer or the patient.
+    required_any: [terminated, ended, after coverage]
+  "29":
+    description: The time limit for filing has expired.
+    meaning: >
+      The claim was received after the payer's timely filing limit. It is a hard denial unless proof
+      of timely filing exists.
+    group: CO
+    action: >
+      Look for proof of timely filing (original submission and clearinghouse acceptance reports) and
+      appeal with it; otherwise write off the balance. Do not bill the patient.
+    required_any: [timely filing, time limit, filing limit, deadline]
+  "31":
+    description: Patient cannot be identified as our insured.
+    meaning: The payer cannot match the patient or member ID to a covered member.
+    group: CO
+    action: Verify the member ID, name and date of birth with the payer and resubmit.
+    required_any: [identified, member id, insured]
+  "45":
+    description: Charge exceeds fee schedule/maximum allowable or contracted/legislated fee arrangement.
+    meaning: >
+      The billed charge is higher than the allowed amount; the difference is a normal contractual
+      adjustment, not a denial and not a billing error.
+    group: CO
+    action: Write off the difference as a contractual adjustment; do not bill the patient for it.
+    required_any: [fee schedule, maximum allowable, allowed amount, contracted]
+  "50":
+    description: These are non-covered services because this is not deemed a 'medical necessity' by the payer.
+    meaning: The payer decided the documentation does not show the service was medically necessary.
+    group: CO
+    action: Appeal with medical records and supporting documentation, or check whether an ABN was signed.
+    required_any: [medical necessity, medically necessary]
+  "96":
+    description: Non-covered charge(s).
+    meaning: The service is not covered under the patient's plan.
+    group: CO
+    action: Check benefits and any signed waiver (ABN); bill the patient only if permitted.
+    required_any: [non-covered, not covered]
+  "97":
+    description: The benefit for this service is included in the payment/allowance for another service/procedure that has already been adjudicated.
+    meaning: >
+      The service is bundled into another service already paid (for example under NCCI edits), so it
+      is not paid separately.
+    group: CO
+    action: >
+      Check NCCI bundling edits; if the service was distinct, append the correct modifier (such as 59
+      or an X modifier) and resubmit or appeal.
+    required_any: [bundl, included in the payment, included in another, another service]
+  "109":
+    description: Claim/service not covered by this payer/contractor. You must send the claim/service to the correct payer/contractor.
+    meaning: The claim was sent to the wrong payer or contractor.
+    group: CO
+    action: Identify the correct payer and submit the claim there.
+    required_any: [correct payer, wrong payer, not covered by this payer]
+  "119":
+    description: Benefit maximum for this time period or occurrence has been reached.
+    meaning: The patient has used up the plan's benefit limit for this service.
+    group: PR
+    action: Verify benefit limits; bill secondary coverage or the patient if allowed.
+    required_any: [benefit maximum, maximum, limit]
+  "151":
+    description: Payment adjusted because the payer deems the information submitted does not support this many/frequency of services.
+    meaning: The number or frequency of services billed exceeds what the documentation supports.
+    group: CO
+    action: Review units and frequency limits; appeal with documentation if justified.
+    required_any: [frequency, units, many]
+  "167":
+    description: This (these) diagnosis(es) is (are) not covered.
+    meaning: The payer does not cover the service for the diagnosis billed.
+    group: CO
+    action: Review diagnosis coding and coverage policy; correct or appeal.
+    required_any: [diagnos]
+  "170":
+    description: Payment is denied when performed/billed by this type of provider.
+    meaning: The provider type or specialty is not eligible to bill this service.
+    group: CO
+    action: Check provider credentialing and billing provider details.
+    required_any: [provider type, type of provider]
+  "181":
+    description: Procedure code was invalid on the date of service.
+    meaning: The CPT/HCPCS code billed was not valid on the service date.
+    group: CO
+    action: Use a code that was valid on the date of service and resubmit.
+    required_any: [invalid, not valid]
+  "197":
+    description: Precertification/authorization/notification/pre-treatment absent.
+    meaning: The payer required prior authorization for the service and none was on file.
+    group: CO
+    action: >
+      If an authorization was obtained, submit a corrected claim with the authorization number;
+      otherwise request retroactive authorization and appeal with medical records. Prevent it with
+      an authorization check at scheduling.
+    required_any: [authorization, precertification, pre-certification]
+  "204":
+    description: This service/equipment/drug is not covered under the patient's current benefit plan.
+    meaning: The patient's plan excludes this service.
+    group: PR
+    action: Confirm the benefit exclusion; bill the patient if a waiver or financial agreement allows.
+    required_any: [not covered, benefit plan]
+  "236":
+    description: This procedure or procedure/modifier combination is not compatible with another procedure or procedure/modifier combination provided on the same day according to the National Correct Coding Initiative.
+    meaning: An NCCI edit blocks billing these two procedures together on the same day.
+    group: CO
+    action: Review NCCI edits; add an appropriate modifier only if the services were truly distinct.
+    required_any: [ncci, national correct coding, same day, not compatible]
+  "242":
+    description: Services not provided by network/primary care providers.
+    meaning: The service was provided out of network or without the required primary care provider.
+    group: CO
+    action: Check network status and referral requirements.
+    required_any: [network]
+  "252":
+    description: An attachment/other documentation is required to adjudicate this claim/service.
+    meaning: The payer needs supporting documents (for example medical records) before it can decide.
+    group: CO
+    action: Send the requested documentation, referencing the claim, within the payer's deadline.
+    required_any: [attachment, documentation, records]
+  "253":
+    description: Sequestration - reduction in federal payment.
+    meaning: The mandatory federal sequestration reduction (Medicare).
+    group: CO
+    action: Post as a contractual adjustment; it is not appealable.
+    required_any: [sequestration]
+  B7:
+    description: This provider was not certified/eligible to be paid for this procedure/service on this date of service.
+    meaning: The provider was not certified or enrolled to bill this service on the service date.
+    group: CO
+    action: Check provider enrolment and credentialing dates.
+    required_any: [certified, eligible, enrol, credential]
+
+rarcs:
+  M51:
+    description: Missing/incomplete/invalid procedure code(s).
+    meaning: The procedure code on the claim is missing or invalid; usually paired with CARC 16.
+    required_any: [procedure code]
+  M127:
+    description: Missing patient medical record for this service.
+    meaning: The payer needs the medical record to process the service.
+    required_any: [medical record]
+  MA130:
+    description: Your claim contains incomplete and/or invalid information, and no appeal rights are afforded because the claim is unprocessable.
+    meaning: The claim was returned as unprocessable; correct it and submit it as a new claim, do not appeal.
+    required_any: [unprocessable, incomplete, invalid]
+  N30:
+    description: Patient ineligible for this service.
+    meaning: The patient was not eligible for this service under the plan.
+    required_any: [ineligible, not eligible]
+  N115:
+    description: This decision was based on a Local Coverage Determination (LCD).
+    meaning: The payer applied a Medicare Local Coverage Determination policy.
+    required_any: [local coverage determination, lcd]
+  N290:
+    description: Missing/incomplete/invalid rendering provider primary identifier.
+    meaning: The rendering provider's NPI is missing or invalid.
+    required_any: [rendering provider, npi]
+  N386:
+    description: This decision was based on a National Coverage Determination (NCD).
+    meaning: The payer applied a Medicare National Coverage Determination policy.
+    required_any: [national coverage determination, ncd]
+
+modifiers:
+  "24":
+    description: Unrelated evaluation and management service by the same physician during a postoperative period.
+    meaning: An E/M visit during the global surgical period that is unrelated to the surgery.
+    required_any: [postoperative, global, unrelated]
+  "25":
+    description: Significant, separately identifiable evaluation and management service by the same physician on the same day of a procedure or other service.
+    meaning: >
+      Appended to an E/M code to show the visit went beyond the usual pre- and post-procedure care of
+      a procedure performed the same day, so both are paid.
+    required_any: [separately identifiable, evaluation and management, e/m]
+  "26":
+    description: Professional component.
+    meaning: Bills only the physician's interpretation of a service that also has a technical component.
+    required_any: [professional]
+  "50":
+    description: Bilateral procedure.
+    meaning: The same procedure was performed on both sides of the body in the same session.
+    required_any: [bilateral, both sides]
+  "51":
+    description: Multiple procedures.
+    meaning: Multiple procedures were performed in the same session by the same provider; secondary procedures are usually paid at a reduced rate.
+    required_any: [multiple procedures]
+  "57":
+    description: Decision for surgery.
+    meaning: An E/M service that resulted in the initial decision to perform major surgery.
+    required_any: [decision for surgery]
+  "59":
+    description: Distinct procedural service.
+    meaning: >
+      Identifies a procedure that is distinct or independent from other services on the same day
+      (different session, site or injury), to bypass an NCCI bundling edit when justified.
+    required_any: [distinct, independent]
+  "76":
+    description: Repeat procedure or service by same physician or other qualified health care professional.
+    meaning: The same procedure was repeated on the same day by the same physician.
+    required_any: [repeat]
+  "77":
+    description: Repeat procedure by another physician or other qualified health care professional.
+    meaning: The same procedure was repeated on the same day by a different physician.
+    required_any: [repeat]
+  "91":
+    description: Repeat clinical diagnostic laboratory test.
+    meaning: A lab test repeated on the same day to obtain subsequent results.
+    required_any: [repeat, laboratory, lab]
+  TC:
+    description: Technical component.
+    meaning: Bills only the equipment, staff and supplies part of a service that also has a professional component.
+    required_any: [technical]
+  GA:
+    description: Waiver of liability statement (ABN) issued as required by payer policy.
+    meaning: A signed Advance Beneficiary Notice is on file, so the patient can be billed if Medicare denies the service.
+    required_any: [abn, advance beneficiary notice, waiver]
+  GY:
+    description: Item or service statutorily excluded or does not meet the definition of any Medicare benefit.
+    meaning: The service is never covered by Medicare; billed to obtain a denial.
+    required_any: [excluded, not covered, statutorily]
+  GZ:
+    description: Item or service expected to be denied as not reasonable and necessary.
+    meaning: The provider expects a medical-necessity denial and no ABN was signed, so the patient cannot be billed.
+    required_any: [expected to be denied, not reasonable and necessary, no abn]
+  KX:
+    description: Requirements specified in the medical policy have been met.
+    meaning: Documentation supports that the policy requirements (for example therapy cap exceptions) are met.
+    required_any: [requirements, policy, met]
+  XE:
+    description: Separate encounter.
+    meaning: A service that is distinct because it occurred during a separate encounter (a more specific alternative to 59).
+    required_any: [separate encounter]
+  XP:
+    description: Separate practitioner.
+    meaning: A service that is distinct because it was performed by a different practitioner (a more specific alternative to 59).
+    required_any: [separate practitioner, different practitioner]
+  XS:
+    description: Separate structure.
+    meaning: A service that is distinct because it was performed on a separate organ or structure (a more specific alternative to 59).
+    required_any: [separate structure, separate organ]
+  XU:
+    description: Unusual non-overlapping service.
+    meaning: A service that is distinct because it does not overlap the usual components of the main service (a more specific alternative to 59).
+    required_any: [non-overlapping, unusual]
+  LT:
+    description: Left side.
+    meaning: The procedure was performed on the left side of the body.
+    required_any: [left]
+  RT:
+    description: Right side.
+    meaning: The procedure was performed on the right side of the body.
+    required_any: [right]

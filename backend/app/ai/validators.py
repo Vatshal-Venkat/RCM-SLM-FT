@@ -73,6 +73,8 @@ class TermRule:
     forbidden: tuple[str, ...]
     formula: str | None
     formula_required_all: tuple[str, ...]
+    # "term" (validated_terms.yaml) or "code" (code_reference.yaml, see app/ai/codes.py)
+    kind: str = "term"
 
 
 @lru_cache
@@ -244,7 +246,11 @@ def _expansion_matches(found: str, expected: str) -> bool:
 # --------------------------------------------------------------------------- validator
 class ResponseValidator:
     def __init__(self, term_rules: dict[str, TermRule] | None = None) -> None:
-        self.term_rules = load_term_rules() if term_rules is None else term_rules
+        if term_rules is None:
+            from app.ai.codes import load_code_rules  # codes builds on TermRule
+
+            term_rules = {**load_term_rules(), **load_code_rules()}
+        self.term_rules = term_rules
 
     def validate(
         self,
@@ -267,7 +273,7 @@ class ResponseValidator:
 
         self._check_repetition(text, rep)
         self._check_phi(text, rep)
-        self._check_terms(text, question, query_terms, rep)
+        self._check_terms(text, question, query_terms, rep, has_data=data_text is not None)
         self._check_numbers(text, question, reference_texts, data_text, rep)
         self._check_identifiers(text, question, reference_texts, data_text, rep)
         self._check_direction(text, data_text, rep)
@@ -294,10 +300,16 @@ class ResponseValidator:
         if kinds:
             rep.issues.append(ValidationIssue("phi_detected", "error", f"Answer contains PHI-like content ({', '.join(kinds)})."))
 
-    def _check_terms(self, text: str, question: str, query_terms: list[str], rep: ValidationReport) -> None:
+    def _check_terms(self, text: str, question: str, query_terms: list[str], rep: ValidationReport,
+                     has_data: bool = False) -> None:
         text_l = text.lower()
-        # Core-concept checks only make sense when the user asked what a term *is*.
+        # Core-concept checks only make sense when the user asked what a term *is*. A question that
+        # names a specific code ("why CO-16?") always needs the code's meaning, unless it is a data
+        # question whose answer is about figures.
         definitional = is_definition_question(question, query_terms)
+        # "What does denial code CO-16 mean?" is about CARC 16, not about what a denial or a CARC is.
+        if any(r.kind == "code" for t in query_terms if (r := self.term_rules.get(t))):
+            definitional = False
         # Validate every critical term the question asks about, plus any the answer defines.
         keys = set(query_terms) | {k for k, r in self.term_rules.items() if _term_present(text_l, r)}
         for key in sorted(keys):
@@ -317,7 +329,12 @@ class ResponseValidator:
                     rep.issues.append(ValidationIssue(
                         "incorrect_definition", "error",
                         f"Answer describes {rule.name} as '{bad}', which is incorrect.", key))
-            if (definitional and key in query_terms and rule.required_any
+            explains = definitional or (rule.kind == "code" and not has_data)
+            # In "What does CO-16 mean?" the group code is context for CARC 16; only the CARC's
+            # meaning is required.
+            if key.startswith("group_") and any(t.startswith("carc_") for t in query_terms):
+                explains = False
+            if (explains and key in query_terms and rule.required_any
                     and not any(r in text_l for r in rule.required_any)):
                 rep.issues.append(ValidationIssue(
                     "missing_core_concept", "error",

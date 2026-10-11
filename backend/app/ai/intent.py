@@ -17,6 +17,8 @@ import re
 from dataclasses import dataclass, field
 from enum import Enum
 
+from app.ai.codes import detect_codes
+from app.ai.periods import mentions_period
 from app.ai.validators import contains_phrase, load_term_rules, term_forms
 
 
@@ -62,6 +64,26 @@ _ANALYTICS_PATTERNS = [
     r"\bwhat is (causing|driving)\b", r"\bcurrent\b.*\brate\b", r"\bperformance\b",
 ]
 
+# Signals that the question is about *our* data rather than RCM in general. They override the
+# general-question markers below ("What should we do if our denial rate increases?" is analytics).
+_OWNERSHIP_PATTERNS = [
+    r"\bour\b", r"\bwe\b", r"\bus\b", r"\bwhich (payer|payor|provider|claims?)\b", r"\bprioriti[sz]e\b",
+    r"\b(this|last|past) (month|quarter|year)\b", r"\bcurrent(ly)?\b", r"\bright now\b",
+]
+# A KPI question phrased in general or hypothetical terms ("What does an increase in old AR
+# generally suggest?", "FPR fell from 90% to 75%. What should an analyst investigate?") is a
+# knowledge question even though it contains trend words such as "increase".
+_GENERAL_QUESTION_PATTERNS = [
+    r"\b(in general|generally|typically|usually|normally|commonly)\b",
+    r"\bwhat (does|do|would|might|could|can) .*\b(suggest|indicate|imply|signal|mean)\b",
+    r"\bif\b", r"\bhypothetical", r"\bfor example\b",
+    r"\b(an?|the) (rcm |billing |revenue cycle )?(analyst|team|practice|organi[sz]ation|hospital|clinic|biller|coder|manager)\b",
+    r"\d+(\.\d+)?\s*%",  # the question supplies its own figures
+]
+
+_METRIC_RE = re.compile(
+    r"\b(rates?|denials?|claims|a/?r|accounts receivable|collections?|collected|revenue|payments?|cash|kpis?|volume)\b")
+
 _DATA_QUERY_PATTERNS = [r"\b(list|show|find|get)\b.*\bclaims?\b", r"\bclaims? (with|for|from|over|above|below)\b"]
 
 _GREETING_RE = re.compile(r"^\s*(hi|hello|hey|good (morning|afternoon|evening)|thanks|thank you)\b[\s!.,]*$", re.I)
@@ -89,7 +111,8 @@ def detect_terms(text: str) -> list[str]:
         found.remove("denial")
     if "days_in_ar" in found and "ar" in found:
         found.remove("ar")
-    return found
+    # Specific codes (CO-16, modifier 25, RARC N30) from code_reference.yaml.
+    return found + detect_codes(text)
 
 
 def classify(query: str) -> IntentResult:
@@ -110,6 +133,13 @@ def classify(query: str) -> IntentResult:
 
     analytics_hits = [p for p in _ANALYTICS_PATTERNS if re.search(p, ql)]
     data_hits = [p for p in _DATA_QUERY_PATTERNS if re.search(p, ql)]
+    period = mentions_period(ql)
+    if (analytics_hits and any(re.search(p, ql) for p in _GENERAL_QUESTION_PATTERNS)
+            and not any(re.search(p, ql) for p in _OWNERSHIP_PATTERNS) and not period):
+        analytics_hits = []
+    # "Denial rate in September 2026?" asks about our data even without "our".
+    if period and _METRIC_RE.search(ql) and "period" not in analytics_hits:
+        analytics_hits.append("period")
 
     if is_rcm and data_hits and not analytics_hits:
         return IntentResult(Intent.DATA_QUERY, 0.75, data_hits, entities, terms)

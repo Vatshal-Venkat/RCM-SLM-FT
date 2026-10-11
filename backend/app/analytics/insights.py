@@ -42,14 +42,18 @@ def _adjudicated_by(db: Session, f: AnalyticsFilters, key_col, name_col, join_mo
     return {r[0]: {"name": r[1], "adjudicated": r[2] or 0, "denied": r[3] or 0} for r in rows}
 
 
-def denial_rate_change(db: Session, days: int = 90, base: AnalyticsFilters | None = None) -> dict:
+def denial_rate_change(db: Session, days: int = 90, base: AnalyticsFilters | None = None,
+                       end: date | None = None) -> dict:
     """Why did the denial rate change? Compare two windows and attribute the change.
 
     The change in overall denial rate is decomposed by payer and by CARC reason: each segment's
     contribution = (its denials now / total adjudicated now) - (its denials before / total adjudicated before).
     Contributions sum to the overall change.
+
+    With an explicit `end` (a period the user named) the windows end there, without the maturity lag.
     """
-    cur, prev = windows(db, days, lag_days=MATURITY_LAG_DAYS)
+    lag = 0 if end else MATURITY_LAG_DAYS
+    cur, prev = windows(db, days, end=end, lag_days=lag)
     if base:
         cur = replace(base, start_date=cur.start_date, end_date=cur.end_date)
         prev = replace(base, start_date=prev.start_date, end_date=prev.end_date)
@@ -91,7 +95,7 @@ def denial_rate_change(db: Session, days: int = 90, base: AnalyticsFilters | Non
     return {
         "current_period": {"start": cur.start_date.isoformat(), "end": cur.end_date.isoformat()},
         "previous_period": {"start": prev.start_date.isoformat(), "end": prev.end_date.isoformat()},
-        "maturity_lag_days": MATURITY_LAG_DAYS,
+        "maturity_lag_days": lag,
         "denial_rate_now": k_cur.denial_rate, "denial_rate_before": k_prev.denial_rate,
         "change_pts": round((k_cur.denial_rate or 0) - (k_prev.denial_rate or 0), 1),
         "adjudicated_now": k_cur.adjudicated_claims, "adjudicated_before": k_prev.adjudicated_claims,
@@ -128,9 +132,9 @@ def top_denial_causes(db: Session, f: AnalyticsFilters) -> dict:
             "preventable_share_pct": round(100.0 * preventable / total, 1)}
 
 
-def ar_change(db: Session, days: int = 90) -> dict:
-    """What is driving AR? Compare AR now vs `days` ago, by payer and by claim status."""
-    end = dataset_as_of(db)
+def ar_change(db: Session, days: int = 90, end: date | None = None) -> dict:
+    """What is driving AR? Compare AR at `end` (default: as-of date) vs `days` earlier, by payer and by claim status."""
+    end = end or dataset_as_of(db)
     before = end - timedelta(days=days)
     all_f = AnalyticsFilters()
     dar_now, ar_now = days_in_ar(db, end, all_f)
@@ -149,7 +153,7 @@ def ar_change(db: Session, days: int = 90) -> dict:
                             .where(Claim.balance > 0.005).group_by(Claim.status)
                             .order_by(func.sum(Claim.balance).desc())).all()
     ]
-    cur, prev = windows(db, days)
+    cur, prev = windows(db, days, end=end)
     speed = []
     for p in breakdowns.payer_performance(db, cur):
         before_row = next((x for x in breakdowns.payer_performance(db, prev) if x["id"] == p["id"]), None)

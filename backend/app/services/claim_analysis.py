@@ -125,6 +125,9 @@ def analyze_claim_facts(db: Session, claim_id: str) -> ClaimFacts | None:
             actions.append("Follow up with the payer on the appeal status if no decision within 30-45 days.")
         elif c.balance > 0.005:
             actions.extend(acts)
+        elif c.status == ClaimStatus.DENIED:
+            # Nothing left to recover; the playbook's last step is the prevention step.
+            actions += ["No recovery action is pending: the denied balance was written off.", acts[-1]]
         if c.payer.payer_type == "medicare" and c.status == ClaimStatus.DENIED and c.balance > 0.005:
             denied_on = max((d.denial_date for d in c.denials), default=None)
             if denied_on:
@@ -175,13 +178,28 @@ def analyze_claim_facts(db: Session, claim_id: str) -> ClaimFacts | None:
         findings.append(Finding("low", "Rejected on first submission", f"{c.rejection_reason}; corrected and resubmitted."))
     # Timely filing only constrains claims that still have to be (re)submitted: rejected claims and
     # denials that need a corrected claim. Pending/appealed claims were already filed on time.
+    filed_on_time = (c.claim_date - c.service_date).days <= c.payer.timely_filing_days
+    if c.denial_category == "timely_filing" and filed_on_time and c.balance > 0.005:
+        # A timely-filing denial on a claim whose first submission was inside the limit is a payer
+        # error: the clearinghouse acceptance report proves timely filing.
+        lag = (c.claim_date - c.service_date).days
+        findings[0].detail = "The payer reports that the claim was received after its timely filing limit."
+        findings.insert(1, Finding("high", "Original submission was on time",
+                                   f"The claim was first submitted on {c.claim_date}, {lag} day{'s' * (lag != 1)} "
+                                   f"after the date of service and inside the payer's {c.payer.timely_filing_days}-day "
+                                   "limit, so the CARC 29 denial can be appealed with proof of timely filing."))
+        actions[:] = [f"Appeal the CARC 29 denial with the clearinghouse acceptance report for the {c.claim_date} "
+                      "submission as proof of timely filing.",
+                      *(a for a in actions if "proof of timely filing" not in a)]
     if c.balance > 0.005 and c.status in (ClaimStatus.REJECTED, ClaimStatus.DENIED):
         if tf_left < 0:
             findings.append(Finding("high", "Timely filing limit passed",
-                                    f"The payer's {c.payer.timely_filing_days}-day timely filing limit passed "
-                                    f"{-tf_left} days ago."))
-            actions.insert(0, "Look for proof of timely filing (original submission and clearinghouse acceptance "
-                              "reports); without it the balance is generally written off and cannot be billed to the patient.")
+                                    f"A new or corrected submission would now be late: the payer's "
+                                    f"{c.payer.timely_filing_days}-day limit, counted from the {c.service_date} date "
+                                    f"of service, passed {-tf_left} days ago."))
+            if c.denial_category != "timely_filing":  # the timely-filing playbook already says this
+                actions.insert(0, "Look for proof of timely filing (original submission and clearinghouse acceptance "
+                                  "reports); without it the balance is generally written off and cannot be billed to the patient.")
             confidence = min(confidence, 0.8)
         elif tf_left < 30:
             findings.append(Finding("high", "Timely filing risk",
@@ -190,6 +208,8 @@ def analyze_claim_facts(db: Session, claim_id: str) -> ClaimFacts | None:
     lines = [
         f"Claim {c.id} (synthetic data). Payer: {c.payer.name} ({c.payer.payer_type.replace('_', ' ')}). "
         f"Provider: {c.provider.name} ({c.provider.specialty}).",
+        f"Payer rules: {c.payer.name}'s timely filing limit is {c.payer.timely_filing_days} days from the date of "
+        "service. Apply only this payer's rules to this claim.",
         f"Service date {c.service_date}; submitted {c.claim_date}; adjudicated {c.adjudication_date or 'not yet'}. "
         f"Days in AR: {dar}. Submissions: {c.submission_count}.",
         f"Procedure: CPT {c.cpt_code}{f'-{c.modifier}' if c.modifier else ''} {c.cpt_description} x{c.units}; "
@@ -276,6 +296,17 @@ def _pin_claim_summary(narrative: str, summary: str) -> str:
     text = normalize_sections(narrative)
     body = re.sub(r"\*\*Claim summary:\*\*.*?(?=\n\s*\*\*|\Z)", "", text, flags=re.S).strip()
     return f"**Claim summary:** {summary}\n\n{body}"
+
+
+def rule_based_chat_answer(f: ClaimFacts) -> str:
+    """Deterministic chat answer about one claim, used when the SLM's answer fails validation twice."""
+    issue = next((x for x in f.findings if x.severity in ("high", "medium")), f.findings[0] if f.findings else None)
+    lead = f"{issue.title}. {issue.detail}" if issue else f"The claim is {f.claim.status.replace('_', ' ')}."
+    lines = [f"**Answer:** {lead}", "", f"**Details:** {f.summary}"]
+    lines += [f"- {x.title}: {x.detail}" for x in f.findings if x is not issue]
+    lines += ["", "**Recommended actions:**", *[f"- {a}" for a in f.actions or ["No action required."]], "",
+              "_Generated from rule-based findings because the model's answer did not pass validation._"]
+    return "\n".join(lines)
 
 
 def _rule_based_narrative(f: ClaimFacts) -> str:

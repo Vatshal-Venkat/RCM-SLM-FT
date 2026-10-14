@@ -62,7 +62,7 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 
 - **Backend API**: `http://127.0.0.1:8000`
 - **Interactive Swagger Docs**: `http://127.0.0.1:8000/docs`
-- **Health Check**: `http://127.0.0.1:8000/api/health`
+- **Health Check**: `http://127.0.0.1:8000/health`
 
 ---
 

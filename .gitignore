@@ -19,6 +19,7 @@ backend/models/*
 backend/data/index/
 backend/data/*.db
 backend/data/*.sqlite
+backend/data/*.db-*
 training/adapters/
 
 # Frontend

@@ -30,6 +30,9 @@ class Settings(BaseSettings):
 
     # --- CORS ---
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    # Optional regex for origins that change per deploy, e.g. Vercel previews:
+    # https://rcm-intelligence(-[a-z0-9-]+)?\.vercel\.app
+    cors_origin_regex: str | None = None
 
     # --- Rate limiting (per client, per minute) ---
     rate_limit_enabled: bool = True
@@ -75,6 +78,16 @@ class Settings(BaseSettings):
     # postgresql+psycopg://user:pass@host/db?sslmode=require
     database_url: str = f"sqlite:///{(BACKEND_DIR / 'data' / 'rcm.db').as_posix()}"
     database_echo: bool = False
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def _sqlalchemy_postgres_url(cls, v: str) -> str:
+        # Neon and most hosts hand out postgres:// or postgresql:// URLs; SQLAlchemy needs the
+        # driver named (psycopg 3), otherwise it looks for psycopg2.
+        for prefix in ("postgres://", "postgresql://"):
+            if isinstance(v, str) and v.startswith(prefix):
+                return "postgresql+psycopg://" + v[len(prefix):]
+        return v
 
     @field_validator("model_path", "knowledge_dir", "index_dir", mode="before")
     @classmethod

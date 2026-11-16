@@ -2,7 +2,7 @@
 
 import clsx from "clsx";
 import {
-  BarChart3, Bot, BookOpenText, Cpu, FileText, LayoutDashboard, Menu, Settings, ShieldX, Sparkles, X,
+  BarChart3, Bot, BookOpenText, CalendarPlus, Cpu, FileText, LayoutDashboard, Menu, Settings, ShieldX, Sparkles, Workflow, X,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -13,6 +13,8 @@ import type { Health } from "@/types/api";
 
 const NAV = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/book", label: "Book Visit", icon: CalendarPlus },
+  { href: "/journey", label: "Patient Journeys", icon: Workflow },
   { href: "/copilot", label: "AI Copilot", icon: Bot },
   { href: "/claims", label: "Claims", icon: FileText },
   { href: "/denials", label: "Denials", icon: ShieldX },

@@ -13,9 +13,11 @@ from starlette.concurrency import run_in_threadpool
 
 from app.ai.factory import get_llm_provider
 from app.ai.llm_provider import LLMProviderError
-from app.api import analytics, chat, claims, health, rag
+from app.api import analytics, chat, claims, encounters, health, rag
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.db.init_db import ensure_schema
+from app.db.session import get_engine
 from app.rag.retriever import get_retriever
 
 logger = logging.getLogger("app")
@@ -25,6 +27,10 @@ logger = logging.getLogger("app")
 async def lifespan(app: FastAPI):
     settings = get_settings()
     configure_logging(settings.log_level)
+    try:
+        ensure_schema(get_engine())  # picks up the patient-journey tables on existing databases
+    except Exception:
+        logger.exception("Could not create missing database tables")
     llm = get_llm_provider()
     if settings.llm_load_on_startup:
         try:
@@ -74,6 +80,7 @@ def create_app() -> FastAPI:
     app.include_router(rag.router)
     app.include_router(analytics.router)
     app.include_router(claims.router)
+    app.include_router(encounters.router)
     return app
 
 

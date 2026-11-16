@@ -207,7 +207,7 @@ def code_encounter(res: ScribeResult, *, payer_id: str, new_patient: bool, age: 
             if m.side:
                 mods.append("RT" if m.side == "right" else "LT")
         nec = necessity(svc, dx_codes, ev)
-        pointers = _pointers(svc, dx_list, ev, nec)
+        pointers = _pointers(svc, dx_list, ev)
         why = [f"Ordered by the clinician" if m.status == "ordered" else "Performed in the office (result documented)"]
         if svc.lateral_modifier:
             why.append(f"Modifier {mods[0]}: {m.side} side" if mods else "Side not documented: add RT/LT before submission")
@@ -271,7 +271,7 @@ def code_encounter(res: ScribeResult, *, payer_id: str, new_patient: bool, age: 
     return out
 
 
-def _pointers(svc: cat.Service, dx_list: list[dict], evidence: dict[str, str], nec: Necessity) -> list[str]:
+def _pointers(svc: cat.Service, dx_list: list[dict], evidence: dict[str, str]) -> list[str]:
     codes = [d["code"] for d in dx_list]
     if svc.category in ("vaccine", "vaccine_admin"):
         return ["Z23"]

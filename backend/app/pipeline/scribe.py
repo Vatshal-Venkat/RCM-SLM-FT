@@ -93,11 +93,15 @@ _EXAM = re.compile(
     r"heart sounds|temperature|blood pressure|heart rate|x-?rays? show|came back|patches|lymph nodes|regular)\b", re.I)
 _PLAN = re.compile(
     r"\b(prescrib\w*|start(?:ing)? you on|increas\w*|decreas\w*|take|use|order\w*|refer\w*|i'?ll|we'?ll|let'?s|keep|"
-    r"continue|give you|inject\w*|get)\b", re.I)
+    r"continue|give you|inject\w*|get|i want|i'?d like|i would like|we need|you need)\b", re.I)
 _RX_VERBS = re.compile(r"\b(prescrib\w*|start(?:ing)? you on|increas\w* your|refill\w*|switch\w* you to)\b", re.I)
 _CLAUSE_BREAK = re.compile(r"[,;:]|\bbut\b|\bthough\b|\bhowever\b", re.I)
 _LOOK = re.compile(r"^\W*(?:let me|i'?ll|i will|let'?s) (?:take a |have a )?(?:look|listen)\b[^.?!]{0,30}[.!]?$", re.I)
-_FILLER = re.compile(r"^\W*(okay|ok|thanks|thank you|alright|all right|sure|great|bye|goodbye)\W*$", re.I)
+# Acknowledgements ("Okay.", "Okay, let's do that.", "Thank you.") carry no history.
+_FILLER = re.compile(
+    r"^\W*(okay|ok|thanks|thank you|alright|all right|sure|great|bye|goodbye|yes|yeah|sounds good)\b"
+    r"(?:\W+(?:let'?s do (?:that|it)|that'?s fine|thank you|thanks|doctor|doc))?\W*$"
+    r"|^\W*(?:no|nope|not really|none)\W*$", re.I)  # bare "No." answers become pertinent negatives instead
 
 
 def _window(sentence: str, start: int, words: int = 6) -> str:

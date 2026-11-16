@@ -300,7 +300,8 @@ def build_era(enc: Encounter, lines: list[EncounterLine], pay_date: date, kind: 
             g, r = a["code"].split("-")
             seg.append(f"CAS*{g}*{r}*{a['amount']:.2f}~")
     seg.append(f"SE*{len(seg) + 1}*0001~")
-    return {"kind": kind, "payment_date": pay_date.isoformat(), "eft_trace": trace, "method": "EFT (ACH CCD+)",
+    return {"kind": kind, "payment_date": pay_date.isoformat(), "eft_trace": trace,
+            "method": "EFT (ACH CCD+)" if total_paid > 0 else "no payment (ERA only)",
             "total_paid": total_paid, "lines": era_lines, "x12_835": "\n".join(seg)}
 
 

@@ -11,10 +11,6 @@ from app.services.chat_service import ChatService
 
 router = APIRouter(prefix="/api/chat", tags=["chat"], dependencies=[Depends(rate_limit("chat", "rate_limit_chat_per_minute"))])
 
-
-
-
-
 @router.post("", response_model=ChatResponse)
 async def chat(req: ChatRequest, service: ChatService = Depends(get_chat_service)) -> ChatResponse:
     ensure_llm_ready()

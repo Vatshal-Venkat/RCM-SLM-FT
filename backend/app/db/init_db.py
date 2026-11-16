@@ -6,6 +6,7 @@ import logging
 
 from sqlalchemy import Engine, insert
 
+from app.models import encounter as _encounter_models  # noqa: F401 - registers pipeline tables on Base
 from app.models.rcm import (
     Base,
     Claim,
@@ -26,6 +27,11 @@ _LOAD_ORDER = [
     ("payments", Payment), ("denials", Denial), ("claim_status_history", ClaimStatusHistory),
     ("dataset_metadata", DatasetMetadata),
 ]
+
+
+def ensure_schema(engine: Engine) -> None:
+    """Create any missing tables (idempotent): lets an existing database pick up new tables."""
+    Base.metadata.create_all(engine)
 
 
 def create_schema(engine: Engine, reset: bool = False) -> None:
